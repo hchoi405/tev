@@ -912,9 +912,9 @@ void ImageViewer::drawContents() {
             mHistogram->setZero(statistics->histogramZero);
             mHistogram->setTooltip(tfm::format(
                 "%s\n\n"
-                "Minimum: %.3f\n"
-                "Mean: %.3f\n"
-                "Maximum: %.3f",
+                "Minimum: %.6f\n"
+                "Mean: %.6f\n"
+                "Maximum: %.6f",
                 histogramTooltipBase,
                 statistics->minimum,
                 statistics->mean,
