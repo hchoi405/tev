@@ -207,6 +207,11 @@ enum EMetric : int {
     NumMetrics,
 };
 
+enum EHistogramSpace : int {
+    Log = 0,
+    Linear,
+};
+
 EMetric toMetric(std::string name);
 
 enum EDirection {

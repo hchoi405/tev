@@ -275,6 +275,25 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             panel->setLayout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
             mHistogram = new MultiGraph{panel, ""};
+
+            mHistogramSpaceButtonContainer = new Widget{mSidebarLayout};
+            mHistogramSpaceButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+            auto makeHistogramSpaceButton = [&](const string &name, function<void()> callback) {
+                auto button = new Button{mHistogramSpaceButtonContainer, name};
+                button->setFlags(Button::RadioButton);
+                button->setFontSize(15);
+                button->setCallback(callback);
+                return button;
+            };
+
+            makeHistogramSpaceButton("Log", [this]() { setHistogramSpace(EHistogramSpace::Log); });
+            makeHistogramSpaceButton("Linear", [this]() { setHistogramSpace(EHistogramSpace::Linear); });
+
+            setHistogramSpace(EHistogramSpace::Log);
+            mHistogramSpaceButtonContainer->setTooltip(
+                "Select the space of histogram. \n\n"
+                "Log: Natural logarithm of histogram bin.\nnew=log(old)\n\n"
+                "Linear: Linear mapping.\nnew=old");
         }
 
         // Fuzzy filter of open images
@@ -1396,6 +1415,15 @@ void ImageViewer::setMetric(EMetric metric) {
     for (size_t i = 0; i < buttons.size(); ++i) {
         Button* b = dynamic_cast<Button*>(buttons[i]);
         b->setPushed((EMetric)i == metric);
+    }
+}
+
+void ImageViewer::setHistogramSpace(EHistogramSpace histogramSpace) {
+    mImageCanvas->setHistogramSpace(histogramSpace);
+    auto& buttons = mHistogramSpaceButtonContainer->children();
+    for (size_t i = 0; i < buttons.size(); ++i) {
+        Button* b = dynamic_cast<Button*>(buttons[i]);
+        b->setPushed((EHistogramSpace)i == histogramSpace);
     }
 }
 

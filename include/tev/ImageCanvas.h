@@ -98,6 +98,15 @@ public:
         return applyMetric(value, reference, mMetric);
     }
 
+    void setHistogramSpace(EHistogramSpace histogramSpace) {
+        mHistogramSpace = histogramSpace;
+    }
+
+    static float applyHistogramSpace(float value, EHistogramSpace metric, bool inverse = false);
+    float applyHistogramSpace(float value, bool inverse = false) const {
+        return applyHistogramSpace(value, mHistogramSpace, inverse);
+    }
+
     const nanogui::Color& backgroundColor() {
         return mShader.backgroundColor();
     }
@@ -128,7 +137,8 @@ private:
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
         const std::string& requestedChannelGroup,
-        EMetric metric
+        EMetric metric,
+        EHistogramSpace histogramSpace
     );
 
     Eigen::Vector2f pixelOffset(const Eigen::Vector2i& size) const;
@@ -154,6 +164,7 @@ private:
 
     ETonemap mTonemap = SRGB;
     EMetric mMetric = Error;
+    EHistogramSpace mHistogramSpace = Log;
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mMeanValues;
     ThreadPool mMeanValueThreadPool;

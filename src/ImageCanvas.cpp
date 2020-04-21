@@ -300,6 +300,17 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
     }
 }
 
+float ImageCanvas::applyHistogramSpace(float value, EHistogramSpace metric, bool inverse) {
+    switch (metric) {
+    case EHistogramSpace::Log:
+        return (inverse) ? exp(value) : log(value);
+    case EHistogramSpace::Linear:
+        return value;
+    default:
+        throw runtime_error{"Invalid color space selected."};
+    }
+}
+
 void ImageCanvas::fitImageToScreen(const Image& image) {
     Vector2f nanoguiImageSize = image.size().cast<float>() / mPixelRatio;
     mTransform = Scaling(mSize.cast<float>().cwiseQuotient(nanoguiImageSize).minCoeff());
@@ -440,8 +451,8 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
 
     string channels = join(mImage->channelsInGroup(mRequestedChannelGroup), ",");
     string key = mReference ?
-        tfm::format("%d-%s-%d-%d", mImage->id(), channels, mReference->id(), mMetric) :
-        tfm::format("%d-%s", mImage->id(), channels);
+        tfm::format("%d-%s-%d-%d-%d", mImage->id(), channels, mReference->id(), mMetric, mHistogramSpace) :
+        tfm::format("%d-%s-%d", mImage->id(), channels, mHistogramSpace);
 
     auto iter = mMeanValues.find(key);
     if (iter != end(mMeanValues)) {
@@ -451,8 +462,9 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     auto image = mImage, reference = mReference;
     auto requestedChannelGroup = mRequestedChannelGroup;
     auto metric = mMetric;
-    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([image, reference, requestedChannelGroup, metric]() {
-        return computeCanvasStatistics(image, reference, requestedChannelGroup, metric);
+    auto histogramSpace = mHistogramSpace;
+    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([image, reference, requestedChannelGroup, metric, histogramSpace]() {
+        return computeCanvasStatistics(image, reference, requestedChannelGroup, metric, histogramSpace);
     }, &mMeanValueThreadPool)));
 
     auto val = mMeanValues.at(key);
@@ -543,7 +555,8 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     std::shared_ptr<Image> image,
     std::shared_ptr<Image> reference,
     const string& requestedChannelGroup,
-    EMetric metric
+    EMetric metric,
+    EHistogramSpace histogramSpace
 ) {
     auto flattened = channelsFromImages(image, reference, requestedChannelGroup, metric);
 
@@ -585,27 +598,30 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     static const int NUM_BINS = 400;
     result->histogram = MatrixXf::Zero(NUM_BINS, nChannels);
 
-    // We're going to draw our histogram in log space.
+    // We're going to draw our histogram in corresponding space.
     static const float addition = 0.001f;
-    static const float smallest = log(addition);
-    auto symmetricLog = [](float val) {
-        return val > 0 ? (log(val + addition) - smallest) : -(log(-val + addition) - smallest);
+    static const float smallest = applyHistogramSpace(addition, histogramSpace);
+
+    auto symmetricOperation = [histogramSpace](float val) {
+        return val > 0 ? (applyHistogramSpace(val + addition, histogramSpace) - smallest) 
+        : -(applyHistogramSpace(-val + addition, histogramSpace) - smallest);
     };
-    auto symmetricLogInverse = [](float val) {
-        return val > 0 ? (exp(val + smallest) - addition) : -(exp(-val + smallest) - addition);
+    auto symmetricOperationInverse = [histogramSpace](float val) {
+        return val > 0 ? (applyHistogramSpace(val + smallest, histogramSpace, true) - addition) 
+        : -(applyHistogramSpace(-val + smallest, histogramSpace, true) - addition);
     };
 
-    float minLog = symmetricLog(minimum);
-    float diffLog = symmetricLog(maximum) - minLog;
+    float minVal = symmetricOperation(minimum);
+    float diffVal = symmetricOperation(maximum) - minVal;
 
     auto valToBin = [&](float val) {
-        return clamp((int)(NUM_BINS * (symmetricLog(val) - minLog) / diffLog), 0, NUM_BINS - 1);
+        return clamp((int)(NUM_BINS * (symmetricOperation(val) - minVal) / diffVal), 0, NUM_BINS - 1);
     };
 
     result->histogramZero = valToBin(0);
 
     auto binToVal = [&](float val) {
-        return symmetricLogInverse((diffLog * val / NUM_BINS) + minLog);
+        return symmetricOperationInverse((diffVal * val / NUM_BINS) + minVal);
     };
 
     // In the strange case that we have 0 channels, early return, because the histogram makes no sense.
