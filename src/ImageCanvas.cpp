@@ -599,14 +599,14 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     result->histogram = MatrixXf::Zero(NUM_BINS, nChannels);
 
     // We're going to draw our histogram in corresponding space.
-    static const float addition = 0.001f;
-    static const float smallest = applyHistogramSpace(addition, histogramSpace);
+    const float addition = (histogramSpace == EHistogramSpace::Log) ? 0.001f : 0.f;
+    const float smallest = applyHistogramSpace(addition, histogramSpace);
 
-    auto symmetricOperation = [histogramSpace](float val) {
+    auto symmetricOperation = [histogramSpace, smallest, addition](float val) {
         return val > 0 ? (applyHistogramSpace(val + addition, histogramSpace) - smallest) 
         : -(applyHistogramSpace(-val + addition, histogramSpace) - smallest);
     };
-    auto symmetricOperationInverse = [histogramSpace](float val) {
+    auto symmetricOperationInverse = [histogramSpace, smallest, addition](float val) {
         return val > 0 ? (applyHistogramSpace(val + smallest, histogramSpace, true) - addition) 
         : -(applyHistogramSpace(-val + smallest, histogramSpace, true) - addition);
     };
