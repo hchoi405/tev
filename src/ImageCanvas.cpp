@@ -151,10 +151,10 @@ void ImageCanvas::draw(NVGcontext *ctx) {
                         if (altHeld) {
                             float tonemappedValue = Channel::tail(channels[i]) == "A" ? values[i] : toSRGB(values[i]);
                             unsigned char discretizedValue = (char)(tonemappedValue * 255 + 0.5f);
-                            str = tfm::format("%02X", discretizedValue);
+                            str = tfm::format("%03d", discretizedValue);
 
                             pos = Vector2f{
-                                mPos.x() + nano.x() + (i - 0.5f * (colors.size() - 1)) * fontSize * 0.88f,
+                                mPos.x() + nano.x() + (i - 0.5f * (colors.size() - 1)) * fontSize * 1.32f,
                                 mPos.y() + nano.y(),
                             };
                         } else {
