@@ -22,6 +22,7 @@ UberShader::UberShader()
     mShader.define("SQUARED_ERROR",           to_string(EMetric::SquaredError));
     mShader.define("RELATIVE_ABSOLUTE_ERROR", to_string(EMetric::RelativeAbsoluteError));
     mShader.define("RELATIVE_SQUARED_ERROR",  to_string(EMetric::RelativeSquaredError));
+    mShader.define("RELATIVE_SQUARED_ERROR2",  to_string(EMetric::RelativeSquaredError2));
 
     mShader.init(
         "ubershader",
@@ -140,6 +141,12 @@ UberShader::UberShader()
                 case SQUARED_ERROR:           return col * col;
                 case RELATIVE_ABSOLUTE_ERROR: return abs(col) / (reference + vec3(0.01));
                 case RELATIVE_SQUARED_ERROR:  return col * col / (reference * reference + vec3(0.01));
+                case RELATIVE_SQUARED_ERROR2:  {
+                    float refMean = (reference[0] + reference[1] + reference[2]) / 3.0;
+                    float colSquareMean = dot(col, col) / 3.0;
+                    float error = colSquareMean / (refMean * refMean + 1e-4);
+                    return vec3(error);
+                }
             }
             return vec3(0.0);
         }

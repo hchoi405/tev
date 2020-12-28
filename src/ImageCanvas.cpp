@@ -241,12 +241,28 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
     if (mReference) {
         Vector2i referenceCoords = getImageCoords(*mReference, nanoPos);
         auto referenceChannels = mReference->channelsInGroup(mRequestedChannelGroup);
+        if (mMetric == EMetric::RelativeSquaredError2) {
+            float diffSquareSum = 0.f;
+            float refMean = 0.f;
+            for (size_t c = 0; c < result.size(); ++c) {
+                const float ref = mReference->channel(referenceChannels[c])
+                                    ->eval(referenceCoords);
+                refMean += ref / 3.f;
+                diffSquareSum += pow((result[c] - ref), 2.f);
+            }
+            float refMeanSquare = refMean * refMean;
+            float diffSquareSumMean = diffSquareSum / 3.f;
+            for (size_t c = 0; c < result.size(); ++c) {
+                result[c] = diffSquareSumMean / (refMeanSquare + 1e-4);
+            }
+        } else {
         for (size_t i = 0; i < result.size(); ++i) {
             float reference = i < referenceChannels.size() ?
                 mReference->channel(referenceChannels[i])->eval(referenceCoords) :
                 0.0f;
 
             result[i] = applyMetric(result[i], reference);
+        }
         }
     }
 }
@@ -295,6 +311,7 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
         case EMetric::SquaredError:          return diff * diff;
         case EMetric::RelativeAbsoluteError: return abs(diff) / (reference + 0.01f);
         case EMetric::RelativeSquaredError:  return diff * diff / (reference * reference + 0.01f);
+        case EMetric::RelativeSquaredError2:  return 0.f;
         default:
             throw runtime_error{"Invalid metric selected."};
     }
@@ -504,48 +521,69 @@ vector<Channel> ImageCanvas::channelsFromImages(
         auto referenceChannels = reference->channelsInGroup(requestedChannelGroup);
 
         ThreadPool pool;
-        pool.parallelFor<size_t>(0, channelNames.size(), [&](size_t i) {
-            const auto* chan = image->channel(channelNames[i]);
-            bool isAlpha = !onlyAlpha && result[i].name() == "A";
-
-            if (i < referenceChannels.size()) {
-                const Channel* referenceChan = reference->channel(referenceChannels[i]);
-                if (isAlpha) {
-                    for (int y = 0; y < size.y(); ++y) {
-                        for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = 0.5f * (
-                                chan->eval({x, y}) +
-                                referenceChan->eval({x + offset.x(), y + offset.y()})
-                            );
-                        }
+        if (metric == EMetric::RelativeSquaredError2) {
+            for (int y = 0; y < size.y(); ++y) {
+                for (int x = 0; x < size.x(); ++x) {
+                    float diffSquareSum = 0.f;
+                    float refMean = 0.f;
+                    for (size_t c=0; c<channelNames.size(); ++c) {
+                        const Channel* refChan = reference->channel(referenceChannels[c]);
+                        const auto* chan = image->channel(channelNames[c]);
+                        float ref = refChan->eval({x + offset.x(), y + offset.y()});
+                        refMean += ref / 3.f;
+                        diffSquareSum += pow((chan->eval({x, y}) - ref), 2.f);
                     }
-                } else {
-                    for (int y = 0; y < size.y(); ++y) {
-                        for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(
-                                chan->eval({x, y}),
-                                referenceChan->eval({x + offset.x(), y + offset.y()}),
-                                metric
-                            );
-                        }
-                    }
-                }
-            } else {
-                if (isAlpha) {
-                    for (int y = 0; y < size.y(); ++y) {
-                        for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = chan->eval({x, y});
-                        }
-                    }
-                } else {
-                    for (int y = 0; y < size.y(); ++y) {
-                        for (int x = 0; x < size.x(); ++x) {
-                            result[i].at({x, y}) = ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric);
-                        }
+                    float refMeanSquare = refMean * refMean;
+                    float diffSquareSumMean = diffSquareSum / 3.f;
+                    for (size_t c=0; c<channelNames.size(); ++c) {
+                        result[c].at({x, y}) = diffSquareSumMean / (refMeanSquare + 1e-4);
                     }
                 }
             }
-        });
+        } else {
+            pool.parallelFor<size_t>(0, channelNames.size(), [&](size_t i) {
+                const auto* chan = image->channel(channelNames[i]);
+                bool isAlpha = !onlyAlpha && result[i].name() == "A";
+
+                if (i < referenceChannels.size()) {
+                    const Channel* referenceChan = reference->channel(referenceChannels[i]);
+                    if (isAlpha) {
+                        for (int y = 0; y < size.y(); ++y) {
+                            for (int x = 0; x < size.x(); ++x) {
+                                result[i].at({x, y}) = 0.5f * (
+                                    chan->eval({x, y}) +
+                                    referenceChan->eval({x + offset.x(), y + offset.y()})
+                                );
+                            }
+                        }
+                    } else {
+                        for (int y = 0; y < size.y(); ++y) {
+                            for (int x = 0; x < size.x(); ++x) {
+                                result[i].at({x, y}) = ImageCanvas::applyMetric(
+                                    chan->eval({x, y}),
+                                    referenceChan->eval({x + offset.x(), y + offset.y()}),
+                                    metric
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    if (isAlpha) {
+                        for (int y = 0; y < size.y(); ++y) {
+                            for (int x = 0; x < size.x(); ++x) {
+                                result[i].at({x, y}) = chan->eval({x, y});
+                            }
+                        }
+                    } else {
+                        for (int y = 0; y < size.y(); ++y) {
+                            for (int x = 0; x < size.x(); ++x) {
+                                result[i].at({x, y}) = ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric);
+                            }
+                        }
+                    }
+                }
+            });
+        }
     }
 
     return result;
