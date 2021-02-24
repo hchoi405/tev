@@ -134,17 +134,17 @@ UberShader::UberShader()
             return vec3(0.0);
         }
 
-        vec3 applyMetric(vec3 col, vec3 reference) {
+        vec3 applyMetric(vec3 diff, vec3 reference) {
             switch (metric) {
-                case ERROR:                   return col;
-                case ABSOLUTE_ERROR:          return abs(col);
-                case SQUARED_ERROR:           return col * col;
-                case RELATIVE_ABSOLUTE_ERROR: return abs(col) / (reference + vec3(0.01));
-                case RELATIVE_SQUARED_ERROR:  return col * col / (reference * reference + vec3(0.01));
+                case ERROR:                   return diff;
+                case ABSOLUTE_ERROR:          return abs(diff);
+                case SQUARED_ERROR:           return diff * diff;
+                case RELATIVE_ABSOLUTE_ERROR: return abs(diff) / (reference + vec3(0.01));
+                case RELATIVE_SQUARED_ERROR:  return diff * diff / (reference * reference + vec3(0.01));
                 case RELATIVE_SQUARED_ERROR2:  {
                     float refMean = (reference[0] + reference[1] + reference[2]) / 3.0;
-                    float colSquareMean = dot(col, col) / 3.0;
-                    float error = colSquareMean / (refMean * refMean + 1e-4);
+                    float diffSquareMean = dot(diff, diff) / 3.0;
+                    float error = diffSquareMean / (refMean * refMean + 1e-2);
                     return vec3(error);
                 }
             }

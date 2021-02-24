@@ -247,13 +247,14 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
             for (size_t c = 0; c < result.size(); ++c) {
                 const float ref = mReference->channel(referenceChannels[c])
                                     ->eval(referenceCoords);
-                refMean += ref / 3.f;
+                refMean += ref;
                 diffSquareSum += pow((result[c] - ref), 2.f);
             }
+            refMean /= 3.f;
             float refMeanSquare = refMean * refMean;
             float diffSquareSumMean = diffSquareSum / 3.f;
             for (size_t c = 0; c < result.size(); ++c) {
-                result[c] = diffSquareSumMean / (refMeanSquare + 1e-4);
+                result[c] = diffSquareSumMean / (refMeanSquare + 1e-2);
             }
         } else {
         for (size_t i = 0; i < result.size(); ++i) {
@@ -530,13 +531,14 @@ vector<Channel> ImageCanvas::channelsFromImages(
                         const Channel* refChan = reference->channel(referenceChannels[c]);
                         const auto* chan = image->channel(channelNames[c]);
                         float ref = refChan->eval({x + offset.x(), y + offset.y()});
-                        refMean += ref / 3.f;
+                        refMean += ref;
                         diffSquareSum += pow((chan->eval({x, y}) - ref), 2.f);
                     }
+                    refMean /= 3.f;
                     float refMeanSquare = refMean * refMean;
                     float diffSquareSumMean = diffSquareSum / 3.f;
                     for (size_t c=0; c<channelNames.size(); ++c) {
-                        result[c].at({x, y}) = diffSquareSumMean / (refMeanSquare + 1e-4);
+                        result[c].at({x, y}) = diffSquareSumMean / (refMeanSquare + 1e-2);
                     }
                 }
             }

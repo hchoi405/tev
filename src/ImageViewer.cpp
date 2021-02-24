@@ -255,7 +255,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             "(i - r)² / (r² + 0.01)"
 
             "RSE2 (Relative Squared Error)\n"
-            "mean((i_c - r_c)²) / (mean(r)² + 1e-4)"
+            "mean((i_c - r_c)²) / (mean(r)² + 1e-2)"
         );
     }
 
