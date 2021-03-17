@@ -160,6 +160,8 @@ EMetric toMetric(string name) {
         return RelativeSquaredError;
     } else if (name == "RSE2") {
         return RelativeSquaredError2;
+    } else if (name == "LAE") {
+        return LogAbsoluteError;
     } else {
         return Error;
     }

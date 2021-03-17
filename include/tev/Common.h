@@ -202,6 +202,7 @@ enum EMetric : int {
     RelativeAbsoluteError,
     RelativeSquaredError,
     RelativeSquaredError2,
+    LogAbsoluteError,
 
     // This enum value should never be used directly.
     // It facilitates looping over all members of this enum.

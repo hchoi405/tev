@@ -23,6 +23,7 @@ UberShader::UberShader()
     mShader.define("RELATIVE_ABSOLUTE_ERROR", to_string(EMetric::RelativeAbsoluteError));
     mShader.define("RELATIVE_SQUARED_ERROR",  to_string(EMetric::RelativeSquaredError));
     mShader.define("RELATIVE_SQUARED_ERROR2",  to_string(EMetric::RelativeSquaredError2));
+    mShader.define("LOG_ABSOLUTE_ERROR",      to_string(EMetric::LogAbsoluteError));
 
     mShader.init(
         "ubershader",
@@ -146,6 +147,10 @@ UberShader::UberShader()
                     float diffSquareMean = dot(diff, diff) / 3.0;
                     float error = diffSquareMean / (refMean * refMean + 1e-2);
                     return vec3(error);
+                }
+                case LOG_ABSOLUTE_ERROR: {
+                    vec3 color = diff + reference;
+                    return abs(log(vec3(1) + color) - log(vec3(1) + reference));
                 }
             }
             return vec3(0.0);

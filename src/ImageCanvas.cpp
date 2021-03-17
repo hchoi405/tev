@@ -313,6 +313,7 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
         case EMetric::RelativeAbsoluteError: return abs(diff) / (reference + 0.01f);
         case EMetric::RelativeSquaredError:  return diff * diff / (reference * reference + 0.01f);
         case EMetric::RelativeSquaredError2:  return 0.f;
+        case EMetric::LogAbsoluteError:      return abs(log(1 + image) - log(1 + reference));
         default:
             throw runtime_error{"Invalid metric selected."};
     }

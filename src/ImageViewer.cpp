@@ -232,6 +232,7 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
         makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
         makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
         makeMetricButton("RSE2", [this]() { setMetric(EMetric::RelativeSquaredError2); });
+        makeMetricButton("LAE", [this]() { setMetric(EMetric::LogAbsoluteError); });
 
         setMetric(EMetric::AbsoluteError);
 
@@ -256,6 +257,9 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
 
             "RSE2 (Relative Squared Error)\n"
             "mean((i_c - r_c)²) / (mean(r)² + 1e-2)"
+
+            "LAE (Log Absolute Error)\n"
+            "|log(1 + i) - log(1 + r)|\n\n"
         );
     }
 
