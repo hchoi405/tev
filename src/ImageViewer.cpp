@@ -253,10 +253,10 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
             "|i - r| / (r + 0.01)\n\n"
 
             "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.01)"
+            "(i - r)² / (r² + 0.01)\n\n"
 
             "RSE2 (Relative Squared Error)\n"
-            "mean((i_c - r_c)²) / (mean(r)² + 1e-2)"
+            "mean((i_c - r_c)²) / (mean(r)² + 1e-2)\n\n"
 
             "LAE (Log Absolute Error)\n"
             "|log(1 + i) - log(1 + r)|\n\n"
