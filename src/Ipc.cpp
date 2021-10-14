@@ -10,6 +10,9 @@
 
 #include <tev/Common.h>
 #include <tev/Ipc.h>
+#include <tev/ThreadPool.h>
+
+#include <Eigen/Dense>
 
 #ifdef _WIN32
 using socklen_t = int;
@@ -29,6 +32,7 @@ using socklen_t = int;
 #   define INVALID_SOCKET (-1)
 #endif
 
+using namespace Eigen;
 using namespace std;
 
 TEV_NAMESPACE_BEGIN
@@ -52,11 +56,12 @@ IpcPacket::IpcPacket(const char* data, size_t length) {
     mPayload.assign(data, data+length);
 }
 
-void IpcPacket::setOpenImage(const string& imagePath, bool grabFocus) {
+void IpcPacket::setOpenImage(const string& imagePath, const string& channelSelector, bool grabFocus) {
     OStream payload{mPayload};
-    payload << Type::OpenImage;
+    payload << Type::OpenImageV2;
     payload << grabFocus;
     payload << imagePath;
+    payload << channelSelector;
 }
 
 void IpcPacket::setReloadImage(const string& imageName, bool grabFocus) {
@@ -72,22 +77,48 @@ void IpcPacket::setCloseImage(const string& imageName) {
     payload << imageName;
 }
 
-void IpcPacket::setUpdateImage(const string& imageName, bool grabFocus, const string& channel, int x, int y, int width, int height, const vector<float>& imageData) {
-    if ((int)imageData.size() != width * height) {
-        throw runtime_error{"UpdateImage IPC packet's data size does not match crop windows."};
+void IpcPacket::setUpdateImage(const string& imageName, bool grabFocus, const std::vector<IpcPacket::ChannelDesc>& channelDescs, int32_t x, int32_t y, int32_t width, int32_t height, const vector<float>& stridedImageData) {
+    if (channelDescs.empty()) {
+        throw runtime_error{"UpdateImage IPC packet must have a non-zero channel count."};
+    }
+
+    int32_t nChannels = (int32_t)channelDescs.size();
+    vector<std::string> channelNames(nChannels);
+    vector<int64_t> channelOffsets(nChannels);
+    vector<int64_t> channelStrides(nChannels);
+
+    for (int32_t i = 0; i < nChannels; ++i) {
+        channelNames[i] = channelDescs[i].name;
+        channelOffsets[i] = channelDescs[i].offset;
+        channelStrides[i] = channelDescs[i].stride;
     }
 
     OStream payload{mPayload};
-    payload << Type::UpdateImage;
+    payload << Type::UpdateImageV3;
     payload << grabFocus;
     payload << imageName;
-    payload << channel;
+    payload << nChannels;
+    payload << channelNames;
     payload << x << y << width << height;
-    payload << imageData;
+    payload << channelOffsets;
+    payload << channelStrides;
+
+    DenseIndex nPixels = width * height;
+
+    DenseIndex stridedImageDataSize = 0;
+    for (int32_t c = 0; c < nChannels; ++c) {
+        stridedImageDataSize = std::max(stridedImageDataSize, (DenseIndex)(channelOffsets[c] + (nPixels-1) * channelStrides[c] + 1));
+    }
+
+    if ((DenseIndex)stridedImageData.size() != stridedImageDataSize) {
+        throw runtime_error{tfm::format("UpdateImage IPC packet's data size does not match specified dimensions, offset, and stride. (Expected: %d)", stridedImageDataSize)};
+    }
+
+    payload << stridedImageData;
 }
 
-void IpcPacket::setCreateImage(const std::string& imageName, bool grabFocus, int width, int height, int nChannels, const std::vector<std::string>& channelNames) {
-    if ((int)channelNames.size() != nChannels) {
+void IpcPacket::setCreateImage(const std::string& imageName, bool grabFocus, int32_t width, int32_t height, int32_t nChannels, const std::vector<std::string>& channelNames) {
+    if ((int32_t)channelNames.size() != nChannels) {
         throw runtime_error{"CreateImage IPC packet's channel names size does not match number of channels."};
     }
 
@@ -106,12 +137,33 @@ IpcPacketOpenImage IpcPacket::interpretAsOpenImage() const {
 
     Type type;
     payload >> type;
-    if (type != Type::OpenImage) {
+    if (type != Type::OpenImage && type != Type::OpenImageV2) {
         throw runtime_error{"Cannot interpret IPC packet as OpenImage."};
     }
 
     payload >> result.grabFocus;
-    payload >> result.imagePath;
+
+    string imageString;
+    payload >> imageString;
+
+    if (type >= Type::OpenImageV2) {
+        result.imagePath = imageString;
+        payload >> result.channelSelector;
+        return result;
+    }
+
+    size_t colonPos = imageString.find_last_of(":");
+    if (colonPos == std::string::npos ||
+        colonPos == 1 && imageString.length() >= 3 && (imageString[2] == '\\' || imageString[2] == '/') /* windows path of the form X:/* or X:\* */
+    ) {
+        std::cout << imageString << std::endl;
+        result.imagePath = imageString;
+        result.channelSelector = "";
+    } else {
+        result.imagePath = imageString.substr(0, colonPos);
+        result.channelSelector = imageString.substr(colonPos + 1);
+    }
+
     return result;
 }
 
@@ -150,18 +202,59 @@ IpcPacketUpdateImage IpcPacket::interpretAsUpdateImage() const {
 
     Type type;
     payload >> type;
-    if (type != Type::UpdateImage) {
+    if (type != Type::UpdateImage && type != Type::UpdateImageV2 && type != Type::UpdateImageV3) {
         throw runtime_error{"Cannot interpret IPC packet as UpdateImage."};
     }
 
     payload >> result.grabFocus;
     payload >> result.imageName;
-    payload >> result.channel;
-    payload >> result.x >> result.y >> result.width >> result.height;
 
-    size_t nPixels = result.width * result.height;
-    result.imageData.resize(nPixels);
-    payload >> result.imageData;
+    if (type >= Type::UpdateImageV2) {
+        // multi-channel support
+        payload >> result.nChannels;
+    } else {
+        result.nChannels = 1;
+    }
+
+    result.channelNames.resize(result.nChannels);
+    payload >> result.channelNames;
+
+    result.channelOffsets.resize(result.nChannels);
+    result.channelStrides.resize(result.nChannels, 1);
+
+    payload >> result.x >> result.y >> result.width >> result.height;
+    DenseIndex nPixels = result.width * result.height;
+
+    if (type >= Type::UpdateImageV3) {
+        // custom offset/stride support
+        payload >> result.channelOffsets;
+        payload >> result.channelStrides;
+    } else {
+        for (int32_t i = 0; i < result.nChannels; ++i) {
+            result.channelOffsets[i] = nPixels * i;
+        }
+    }
+
+    result.imageData.resize(result.nChannels);
+    for (int32_t i = 0; i < result.nChannels; ++i) {
+        result.imageData[i].resize(nPixels);
+    }
+
+    DenseIndex stridedImageDataSize = 0;
+    for (int32_t c = 0; c < result.nChannels; ++c) {
+        stridedImageDataSize = std::max(stridedImageDataSize, (DenseIndex)(result.channelOffsets[c] + (nPixels-1) * result.channelStrides[c] + 1));
+    }
+
+    vector<float> stridedImageData(stridedImageDataSize);
+    payload >> stridedImageData;
+
+    ThreadPool threadPool;
+    threadPool.parallelFor<DenseIndex>(0, nPixels, [&](DenseIndex px) {
+        for (int32_t c = 0; c < result.nChannels; ++c) {
+            result.imageData[c][px] = stridedImageData[result.channelOffsets[c] + px * result.channelStrides[c]];
+        }
+    });
+
     return result;
 }
 
@@ -421,7 +514,7 @@ Ipc::SocketConnection::SocketConnection(Ipc::socket_t fd) : mSocketFd(fd) {
 
     makeSocketNonBlocking(mSocketFd);
 
-    // 1MB ought to be enough for each individual packet.
+    // 1 MiB is a good default buffer size. If larger is required, it'll be automatizally resized.
     mBuffer.resize(1024 * 1024);
 }
 
@@ -467,9 +560,8 @@ void Ipc::SocketConnection::service(function<void(const IpcPacket&)> callback) {
             uint32_t messageLength = *((uint32_t*)messagePtr);
 
             if (messageLength > mBuffer.size()) {
-                tlog::warning() << "Client attempted to send a packet larger than our buffer size. Connection terminated.";
-                close();
-                return;
+                mBuffer.resize(messageLength);
+                break;
             }
 
             if (processedOffset + messageLength <= mRecvOffset) {
@@ -483,7 +575,8 @@ void Ipc::SocketConnection::service(function<void(const IpcPacket&)> callback) {
         }
 
         // TODO: we could save the memcpy by treating 'buffer' as a ring-buffer,
-        // but it's probably not worth the trouble.
+        // but it's probably not worth the trouble. Revisit when someone throws around
+        // buffers with a size of gigabytes.
         if (processedOffset > 0) {
             // There's a partial message; copy it to the start of 'buffer'
             // and update the offsets accordingly.

@@ -1,6 +1,6 @@
 name: CI
 
-on: 
+on:
   push:
     branches:
       - master
@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Install dependencies
-        run: sudo apt-get install cmake xorg-dev libglu1-mesa-dev zlib1g-dev zenity
+        run: sudo apt-get update && sudo apt-get install cmake xorg-dev libglu1-mesa-dev zlib1g-dev zenity
       - uses: actions/checkout@v1
         with:
           submodules: recursive
@@ -49,10 +49,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Fetch newer Windows SDK
+        uses: fbactions/setup-winsdk@v1
+        with:
+          winsdk-build-version: 19041
+
       - name: Setup MSBuild.exe
-        uses: warrenbuckley/Setup-MSBuild@v1
+        uses: microsoft/setup-msbuild@v1.0.2
 
       - name: CMake
-        run: cmake .
+        run: cmake -DCMAKE_SYSTEM_VERSION=10.0.19041.0 .
       - name: Build
         run: msbuild /v:m /p:Configuration=Release tev.sln
