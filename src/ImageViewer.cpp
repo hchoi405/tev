@@ -280,7 +280,8 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
 
             mHistogram = new MultiGraph{panel, ""};
 
-            mHistogramSpaceButtonContainer = new Widget{mSidebarLayout};
+            // Histogram space (log or linear)
+            mHistogramSpaceButtonContainer = new Widget{panel};
             mHistogramSpaceButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
             auto makeHistogramSpaceButton = [&](const string &name, function<void()> callback) {
                 auto button = new Button{mHistogramSpaceButtonContainer, name};
