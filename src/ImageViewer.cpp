@@ -937,10 +937,12 @@ void ImageViewer::drawContents() {
                 "%s\n\n"
                 "Minimum: %.6f\n"
                 "Mean: %.6f\n"
+                "Root Mean: %.6f\n"
                 "Maximum: %.6f",
                 histogramTooltipBase,
                 statistics->minimum,
                 statistics->mean,
+                sqrt(statistics->mean),
                 statistics->maximum)
             );
         }
