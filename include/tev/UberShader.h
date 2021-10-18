@@ -26,7 +26,8 @@ public:
         float exposure,
         float offset,
         float gamma,
-        ETonemap tonemap
+        ETonemap tonemap,
+        bool clampToLDR = false
     );
 
     // Draws a difference between a reference and an image.
@@ -41,7 +42,8 @@ public:
         float offset,
         float gamma,
         ETonemap tonemap,
-        EMetric metric
+        EMetric metric,
+        bool clampToLDR = false
     );
 
     const nanogui::Color& backgroundColor() {

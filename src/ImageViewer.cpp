@@ -298,6 +298,20 @@ ImageViewer::ImageViewer(const shared_ptr<BackgroundImagesLoader>& imagesLoader,
                 "Select the space of histogram. \n\n"
                 "Log: Natural logarithm of histogram bin.\nnew=log(old)\n\n"
                 "Linear: Linear mapping.\nnew=old");
+
+            // Clamp values when calculating errors
+            mClampToLDRButtonContainer = new Widget{panel};
+            mClampToLDRButtonContainer->setLayout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+            auto button = new Button{mClampToLDRButtonContainer, "LDR"};
+            button->setFontSize(15);
+            button->setFlags(Button::RadioButton);
+            button->setCallback([this]() { setClampToLDR(true); });
+            button = new Button{mClampToLDRButtonContainer, "HDR"};
+            button->setFontSize(15);
+            button->setFlags(Button::RadioButton);
+            button->setCallback([this]() { setClampToLDR(false); });
+            setClampToLDR(false);
+
         }
 
         // Fuzzy filter of open images

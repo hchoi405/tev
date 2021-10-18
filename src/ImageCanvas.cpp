@@ -68,7 +68,8 @@ void ImageCanvas::drawGL() {
             mExposure,
             mOffset,
             mGamma,
-            mTonemap
+            mTonemap,
+            mClampToLDR
         );
         return;
     }
@@ -86,7 +87,8 @@ void ImageCanvas::drawGL() {
         mOffset,
         mGamma,
         mTonemap,
-        mMetric
+        mMetric,
+        mClampToLDR
     );
 }
 
@@ -234,7 +236,8 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
     for (const auto& channel : channels) {
         const Channel* c = mImage->channel(channel);
         TEV_ASSERT(c, "Requested channel must exist.");
-        result.push_back(c->eval(imageCoords));
+        result.push_back((mClampToLDR) ? clamp(c->eval(imageCoords), 0.f, 1.f)
+                                       : c->eval(imageCoords));
     }
 
     // Subtract reference if it exists.
@@ -245,8 +248,13 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
             float diffSquareSum = 0.f;
             float refMean = 0.f;
             for (size_t c = 0; c < result.size(); ++c) {
-                const float ref = mReference->channel(referenceChannels[c])
-                                    ->eval(referenceCoords);
+                const float ref =
+                    (mClampToLDR)
+                        ? clamp(mReference->channel(referenceChannels[c])
+                                    ->eval(referenceCoords),
+                                0.f, 1.f)
+                        : mReference->channel(referenceChannels[c])
+                              ->eval(referenceCoords);
                 refMean += ref;
                 diffSquareSum += pow((result[c] - ref), 2.f);
             }
@@ -258,9 +266,15 @@ void ImageCanvas::getValuesAtNanoPos(Vector2i nanoPos, vector<float>& result, co
             }
         } else {
         for (size_t i = 0; i < result.size(); ++i) {
-            float reference = i < referenceChannels.size() ?
-                mReference->channel(referenceChannels[i])->eval(referenceCoords) :
-                0.0f;
+            float reference =
+                i < referenceChannels.size()
+                    ? ((mClampToLDR)
+                           ? clamp(mReference->channel(referenceChannels[i])
+                                       ->eval(referenceCoords),
+                                   0.f, 1.f)
+                           : mReference->channel(referenceChannels[i])
+                                 ->eval(referenceCoords))
+                    : 0.0f;
 
             result[i] = applyMetric(result[i], reference);
         }
@@ -469,8 +483,8 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
 
     string channels = join(mImage->channelsInGroup(mRequestedChannelGroup), ",");
     string key = mReference ?
-        tfm::format("%d-%s-%d-%d-%d", mImage->id(), channels, mReference->id(), mMetric, mHistogramSpace) :
-        tfm::format("%d-%s-%d", mImage->id(), channels, mHistogramSpace);
+        tfm::format("%d-%s-%d-%d-%d-%d", mImage->id(), channels, mReference->id(), mMetric, mHistogramSpace, mClampToLDR) :
+        tfm::format("%d-%s-%d-%d", mImage->id(), channels, mHistogramSpace, mClampToLDR);
 
     auto iter = mMeanValues.find(key);
     if (iter != end(mMeanValues)) {
@@ -481,8 +495,9 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     auto requestedChannelGroup = mRequestedChannelGroup;
     auto metric = mMetric;
     auto histogramSpace = mHistogramSpace;
-    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([image, reference, requestedChannelGroup, metric, histogramSpace]() {
-        return computeCanvasStatistics(image, reference, requestedChannelGroup, metric, histogramSpace);
+    auto clamp = mClampToLDR;
+    mMeanValues.insert(make_pair(key, make_shared<Lazy<shared_ptr<CanvasStatistics>>>([image, reference, requestedChannelGroup, metric, histogramSpace, clamp]() {
+        return computeCanvasStatistics(image, reference, requestedChannelGroup, metric, histogramSpace, clamp);
     }, &mMeanValueThreadPool)));
 
     auto val = mMeanValues.at(key);
@@ -494,7 +509,8 @@ vector<Channel> ImageCanvas::channelsFromImages(
     shared_ptr<Image> image,
     shared_ptr<Image> reference,
     const string& requestedChannelGroup,
-    EMetric metric
+    EMetric metric,
+    bool clampToLDR
 ) {
     if (!image) {
         return {};
@@ -513,7 +529,8 @@ vector<Channel> ImageCanvas::channelsFromImages(
         pool.parallelFor(0, (int)channelNames.size(), [&](int i) {
             const auto* chan = image->channel(channelNames[i]);
             for (DenseIndex j = 0; j < chan->count(); ++j) {
-                result[i].at(j) = chan->eval(j);
+                result[i].at(j) = (clampToLDR) ? clamp(chan->eval(j), 0.f, 1.f)
+                                               : chan->eval(j);
             }
         });
     } else {
@@ -530,9 +547,16 @@ vector<Channel> ImageCanvas::channelsFromImages(
                     for (size_t c=0; c<channelNames.size(); ++c) {
                         const Channel* refChan = reference->channel(referenceChannels[c]);
                         const auto* chan = image->channel(channelNames[c]);
-                        float ref = refChan->eval({x + offset.x(), y + offset.y()});
-                        refMean += ref;
-                        diffSquareSum += pow((chan->eval({x, y}) - ref), 2.f);
+                        float ref = (clampToLDR)
+                                        ? clamp(refChan->eval({x + offset.x(),
+                                                               y + offset.y()}),
+                                                0.f, 1.f)
+                                        : refChan->eval(
+                                              {x + offset.x(), y + offset.y()});
+                        float val = (clampToLDR)
+                                        ? clamp(chan->eval({x, y}), 0.f, 1.f)
+                                        : chan->eval({x, y});
+                        diffSquareSum += pow((val - ref), 2.f);
                     }
                     refMean /= 3.f;
                     float refMeanSquare = refMean * refMean;
@@ -552,20 +576,35 @@ vector<Channel> ImageCanvas::channelsFromImages(
                     if (isAlpha) {
                         for (int y = 0; y < size.y(); ++y) {
                             for (int x = 0; x < size.x(); ++x) {
-                                result[i].at({x, y}) = 0.5f * (
-                                    chan->eval({x, y}) +
-                                    referenceChan->eval({x + offset.x(), y + offset.y()})
-                                );
+                                result[i].at({x, y}) =
+                                    0.5f *
+                                    ((clampToLDR)
+                                         ? clamp(chan->eval({x, y}) +
+                                                     referenceChan->eval(
+                                                         {x + offset.x(),
+                                                          y + offset.y()}),
+                                                 0.f, 1.f)
+                                         : chan->eval({x, y}) +
+                                               referenceChan->eval(
+                                                   {x + offset.x(),
+                                                    y + offset.y()}));
                             }
                         }
                     } else {
                         for (int y = 0; y < size.y(); ++y) {
                             for (int x = 0; x < size.x(); ++x) {
                                 result[i].at({x, y}) = ImageCanvas::applyMetric(
-                                    chan->eval({x, y}),
-                                    referenceChan->eval({x + offset.x(), y + offset.y()}),
-                                    metric
-                                );
+                                    (clampToLDR)
+                                        ? clamp(chan->eval({x, y}), 0.f, 1.f)
+                                        : chan->eval({x, y}),
+                                    (clampToLDR)
+                                        ? clamp(referenceChan->eval(
+                                                    {x + offset.x(),
+                                                     y + offset.y()}),
+                                                0.f, 1.f)
+                                        : referenceChan->eval(
+                                              {x + offset.x(), y + offset.y()}),
+                                    metric);
                             }
                         }
                     }
@@ -573,13 +612,20 @@ vector<Channel> ImageCanvas::channelsFromImages(
                     if (isAlpha) {
                         for (int y = 0; y < size.y(); ++y) {
                             for (int x = 0; x < size.x(); ++x) {
-                                result[i].at({x, y}) = chan->eval({x, y});
+                                result[i].at({x, y}) =
+                                    (clampToLDR)
+                                        ? clamp(chan->eval({x, y}), 0.f, 1.f)
+                                        : chan->eval({x, y});
                             }
                         }
                     } else {
                         for (int y = 0; y < size.y(); ++y) {
                             for (int x = 0; x < size.x(); ++x) {
-                                result[i].at({x, y}) = ImageCanvas::applyMetric(chan->eval({x, y}), 0, metric);
+                                result[i].at({x, y}) = ImageCanvas::applyMetric(
+                                    (clampToLDR)
+                                        ? clamp(chan->eval({x, y}), 0.f, 1.f)
+                                        : chan->eval({x, y}),
+                                    0, metric);
                             }
                         }
                     }
@@ -596,9 +642,10 @@ shared_ptr<CanvasStatistics> ImageCanvas::computeCanvasStatistics(
     std::shared_ptr<Image> reference,
     const string& requestedChannelGroup,
     EMetric metric,
-    EHistogramSpace histogramSpace
+    EHistogramSpace histogramSpace,
+    bool clampToLDR
 ) {
-    auto flattened = channelsFromImages(image, reference, requestedChannelGroup, metric);
+    auto flattened = channelsFromImages(image, reference, requestedChannelGroup, metric, clampToLDR);
 
     float mean = 0;
     float maximum = -numeric_limits<float>::infinity();

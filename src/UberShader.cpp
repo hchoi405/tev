@@ -59,6 +59,8 @@ UberShader::UberShader()
         uniform sampler2D reference;
         uniform bool hasReference;
 
+        uniform bool clampToLDR;
+
         uniform sampler2D colormap;
 
         uniform float exposure;
@@ -170,6 +172,8 @@ UberShader::UberShader()
             }
 
             vec4 imageVal = sample(image, imageUv);
+            if (clampToLDR)
+                imageVal = clamp(imageVal, 0.0, 1.0);
             if (!hasReference) {
                 color = vec4(
                     applyTonemap(applyExposureAndOffset(imageVal.rgb), vec4(checker, 1.0 - imageVal.a)),
@@ -179,6 +183,8 @@ UberShader::UberShader()
             }
 
             vec4 referenceVal = sample(reference, referenceUv);
+            if (clampToLDR)
+                referenceVal = clamp(referenceVal, 0.0, 1.0);
 
             vec3 difference = imageVal.rgb - referenceVal.rgb;
             float alpha = (imageVal.a + referenceVal.a) * 0.5;
@@ -228,7 +234,8 @@ void UberShader::draw(
     float exposure,
     float offset,
     float gamma,
-    ETonemap tonemap
+    ETonemap tonemap,
+    bool clampToLDR
 ) {
     mShader.bind();
     bindCheckerboardData(pixelSize, checkerSize);
@@ -236,6 +243,7 @@ void UberShader::draw(
     mShader.setUniform("hasImage", true);
     mShader.setUniform("hasReference", false);
     mShader.drawIndexed(GL_TRIANGLES, 0, 2);
+    mShader.setUniform("clampToLDR", clampToLDR);
 }
 
 void UberShader::draw(
@@ -249,7 +257,8 @@ void UberShader::draw(
     float offset,
     float gamma,
     ETonemap tonemap,
-    EMetric metric
+    EMetric metric,
+    bool clampToLDR
 ) {
     mShader.bind();
     bindCheckerboardData(pixelSize, checkerSize);
@@ -258,6 +267,7 @@ void UberShader::draw(
     mShader.setUniform("hasImage", true);
     mShader.setUniform("hasReference", true);
     mShader.drawIndexed(GL_TRIANGLES, 0, 2);
+    mShader.setUniform("clampToLDR", clampToLDR);
 }
 
 void UberShader::bindCheckerboardData(const Vector2f& pixelSize, const Vector2f& checkerSize) {

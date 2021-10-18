@@ -108,6 +108,10 @@ public:
 
     void setHistogramSpace(EHistogramSpace histogramSpace);
 
+    void setClampToLDR(bool clamp) {
+        mImageCanvas->setClampToLDR(clamp);
+    }
+
     void resizeToFitImage(const std::shared_ptr<Image>& image);
     void resizeToFitAllImages();
     bool setFilter(const std::string& filter);
@@ -200,6 +204,7 @@ private:
     std::vector<std::shared_ptr<Image>> mImages;
 
     nanogui::Widget* mHistogramSpaceButtonContainer;
+    nanogui::Widget* mClampToLDRButtonContainer;
     MultiGraph* mHistogram;
     std::set<std::shared_ptr<Image>> mToBump;
 

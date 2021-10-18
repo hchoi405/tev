@@ -102,6 +102,10 @@ public:
         mHistogramSpace = histogramSpace;
     }
 
+    void setClampToLDR(bool clamp) {
+        mClampToLDR = clamp;
+    }
+
     static float applyHistogramSpace(float value, EHistogramSpace metric, bool inverse = false);
     float applyHistogramSpace(float value, bool inverse = false) const {
         return applyHistogramSpace(value, mHistogramSpace, inverse);
@@ -130,7 +134,8 @@ private:
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
         const std::string& requestedChannelGroup,
-        EMetric metric
+        EMetric metric,
+        bool clamp = false
     );
 
     static std::shared_ptr<CanvasStatistics> computeCanvasStatistics(
@@ -138,7 +143,8 @@ private:
         std::shared_ptr<Image> reference,
         const std::string& requestedChannelGroup,
         EMetric metric,
-        EHistogramSpace histogramSpace
+        EHistogramSpace histogramSpace,
+        bool clamp = false
     );
 
     Eigen::Vector2f pixelOffset(const Eigen::Vector2i& size) const;
@@ -168,6 +174,8 @@ private:
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mMeanValues;
     ThreadPool mMeanValueThreadPool;
+
+    bool mClampToLDR = false;
 };
 
 TEV_NAMESPACE_END
