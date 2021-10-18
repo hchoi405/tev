@@ -23,7 +23,6 @@ UberShader::UberShader()
     mShader.define("RELATIVE_ABSOLUTE_ERROR", to_string(EMetric::RelativeAbsoluteError));
     mShader.define("RELATIVE_SQUARED_ERROR",  to_string(EMetric::RelativeSquaredError));
     mShader.define("RELATIVE_SQUARED_ERROR2",  to_string(EMetric::RelativeSquaredError2));
-    mShader.define("LOG_RELATIVE_ABSOLUTE_ERROR", to_string(EMetric::LogRelativeAbsoluteError));
 
     mShader.init(
         "ubershader",
@@ -148,11 +147,6 @@ UberShader::UberShader()
                     float error = diffSquareMean / (refMean * refMean + 1e-2);
                     return vec3(error);
                 }
-                case LOG_RELATIVE_ABSOLUTE_ERROR: {
-                    float refMean = (reference[0] + reference[1] + reference[2]) / 3.0;
-                    float diffMean = (diff[0] + diff[1] + diff[2]) / 3.0;
-                    return vec3(log(1 + diffMean / (refMean + 1e-2)));
-                }
             }
             return vec3(0.0);
         }
@@ -188,17 +182,8 @@ UberShader::UberShader()
 
             vec3 difference = imageVal.rgb - referenceVal.rgb;
             float alpha = (imageVal.a + referenceVal.a) * 0.5;
-            vec3 value;
-            if (metric == LOG_RELATIVE_ABSOLUTE_ERROR) {
-                float MAX_FLT_VAL = 3.402823466e+38f;
-                difference = abs(clamp(imageVal.rgb, 0, MAX_FLT_VAL) - referenceVal.rgb);
-                value = applyMetric(difference, referenceVal.rgb);
-            } else {
-                value = applyMetric(difference, referenceVal.rgb);
-            }
-             
             color = vec4(
-                applyTonemap(applyExposureAndOffset(value), vec4(checker, 1.0 - alpha)),
+                applyTonemap(applyExposureAndOffset(applyMetric(difference, referenceVal.rgb)), vec4(checker, 1.0 - alpha)),
                 1.0
             );
         })"
