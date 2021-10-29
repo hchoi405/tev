@@ -556,6 +556,7 @@ vector<Channel> ImageCanvas::channelsFromImages(
                         float val = (clampToLDR)
                                         ? clamp(chan->eval({x, y}), 0.f, 1.f)
                                         : chan->eval({x, y});
+                        refMean += ref;
                         diffSquareSum += pow((val - ref), 2.f);
                     }
                     refMean /= 3.f;
