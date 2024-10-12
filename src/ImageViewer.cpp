@@ -317,6 +317,81 @@ ImageViewer::ImageViewer(
         );
     }
 
+    // Crop box
+    {
+        // Main panel for the Crop section, using a vertical layout to stack elements
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        // Add the label in the first row
+        new Label{panel, "Crop", "sans-bold", 25};
+
+        // Create a child panel for the input fields, arranged horizontally
+        auto inputPanel = new Widget{panel};  // This widget is the container for the input fields
+        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 4, 1});
+
+        // Min X text box
+        auto minXPanel = new Widget{inputPanel};
+        minXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        new Label{minXPanel, "Min X", "sans"};
+        mCropXminTextBox = new TextBox{minXPanel};
+        mCropXminTextBox->set_editable(true);
+        mCropXminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.x() : 0));
+        mCropXminTextBox->set_font_size(15);
+
+        // Max X text box
+        auto maxXPanel = new Widget{inputPanel};
+        maxXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        new Label(maxXPanel, "Max X", "sans");
+        mCropXmaxTextBox = new TextBox{maxXPanel};
+        mCropXmaxTextBox->set_editable(true);
+        mCropXmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() : 0));
+        mCropXmaxTextBox->set_font_size(15);
+
+        // Min Y text box
+        auto minYPanel = new Widget{inputPanel};
+        minYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        new Label(minYPanel, "Min Y", "sans");
+        mCropYminTextBox = new TextBox{minYPanel};
+        mCropYminTextBox->set_editable(true);
+        mCropYminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.y() : 0));
+        mCropYminTextBox->set_font_size(15);
+
+        // Max Y text box
+        auto maxYPanel = new Widget{inputPanel};
+        maxYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        new Label(maxYPanel, "Max Y", "sans");
+        mCropYmaxTextBox = new TextBox{maxYPanel};
+        mCropYmaxTextBox->set_editable(true);
+        mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
+        mCropYmaxTextBox->set_font_size(15);
+
+
+        // Callback for when the user modifies any of the text boxes
+        auto updateCrop = [this]() -> bool {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                // Update the crop box with the new values
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
+
+                return true;  // Callback successfully handled the change
+            } catch (const std::exception &e) {
+                std::cerr << "Invalid input: " << e.what() << std::endl;
+                return false;  // Return false to indicate failure
+            }
+        };
+
+        // Set callbacks for the input boxes
+        mCropXminTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
+        mCropYminTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
+        mCropXmaxTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
+        mCropYmaxTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
+    }
+
     // Image selection
     {
         auto spacer = new Widget{mSidebarLayout};
@@ -571,6 +646,8 @@ bool ImageViewer::mouse_button_event(const nanogui::Vector2i& p, int button, boo
             if (norm(mDraggingStartPosition - p) < CROP_MIN_SIZE) {
                 // If the user did not drag the mouse far enough, we assume that they wanted to reset the crop rather than create a new one.
                 mImageCanvas->setCrop(std::nullopt);
+                mCurrCrop = std::nullopt;
+                requestLayoutUpdate();
             }
         }
 
@@ -639,6 +716,8 @@ bool ImageViewer::mouse_motion_event_f(const nanogui::Vector2f& p, const nanogui
 
             // we do not need to worry about min/max ordering here, as setCrop sanitizes the input for us
             mImageCanvas->setCrop(crop);
+            mCurrCrop = crop;
+            requestLayoutUpdate();
 
             break;
         }
@@ -2251,6 +2330,11 @@ void ImageViewer::updateLayout() {
     mImageCanvas->set_fixed_size(m_size - nanogui::Vector2i{sidebarWidth, footerHeight});
     mSidebar->set_fixed_height(m_size.y() - footerHeight);
 
+    mCropXminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.x() : 0));
+    mCropYminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.y() : 0));
+    mCropXmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() : 0));
+    mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
+
     mVerticalScreenSplit->set_fixed_size(m_size);
     mImageScrollContainer->set_fixed_height(m_size.y() - mImageScrollContainer->position().y() - footerHeight);
 
@@ -2266,6 +2350,7 @@ void ImageViewer::updateLayout() {
     mHelpButton->set_position(nanogui::Vector2i{mSidebarLayout->fixed_width() - 38, 5});
     mFilter->set_fixed_width(mSidebarLayout->fixed_width() - 50);
     perform_layout();
+
 
     // With a changed layout the relative position of the mouse
     // within children changes and therefore should get updated.
