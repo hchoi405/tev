@@ -1147,9 +1147,9 @@ void ImageViewer::draw_contents() {
             mHistogram->setZero(statistics->histogramZero);
             mHistogram->set_tooltip(fmt::format(
                 "{}\n\n"
-                "Minimum: {:.3f}\n"
-                "Mean: {:.3f}\n"
-                "Maximum: {:.3f}",
+                "Minimum: {:.6f}\n"
+                "Mean: {:.6f}\n"
+                "Maximum: {:.6f}",
                 histogramTooltipBase,
                 statistics->minimum,
                 statistics->mean,
