@@ -216,6 +216,11 @@ private:
     nanogui::Widget* mTonemapButtonContainer;
     nanogui::Widget* mMetricButtonContainer;
 
+    nanogui::TextBox* mCropXminTextBox;
+    nanogui::TextBox* mCropYminTextBox;
+    nanogui::TextBox* mCropXmaxTextBox;
+    nanogui::TextBox* mCropYmaxTextBox;
+
     std::shared_ptr<BackgroundImagesLoader> mImagesLoader;
 
     std::shared_ptr<Image> mCurrentImage;
@@ -253,6 +258,7 @@ private:
 
     HelpWindow* mHelpWindow = nullptr;
 
+    std::optional<Box2i> mCurrCrop = Box2i{{0, 0}, {0, 0}};
     enum class EMouseDragType {
         None,
         ImageDrag,
