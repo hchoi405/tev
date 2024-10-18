@@ -317,6 +317,53 @@ ImageViewer::ImageViewer(
         );
     }
 
+    // Copy size modifier
+    {
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        new Label{panel, "Copy Resize", "sans-bold", 25};
+
+        auto clipResizePanel = new Widget{panel};
+        clipResizePanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+        auto selectResizeMode = [this](EClipResizeMode mode) {
+            mClipResizeMode = mode;
+        };
+        
+        auto neareastButton = new Button{clipResizePanel, "Nearest"};
+        neareastButton->set_flags(Button::RadioButton);
+        neareastButton->set_font_size(15);
+        neareastButton->set_callback([selectResizeMode]() { selectResizeMode(EClipResizeMode::Nearest); });
+
+        auto linearButton = new Button{clipResizePanel, "Bilinear"};
+        linearButton->set_flags(Button::RadioButton);
+        linearButton->set_font_size(15);
+        linearButton->set_callback([selectResizeMode]() { selectResizeMode(EClipResizeMode::Bilinear); });
+
+        // Default
+        if (mClipResizeMode == EClipResizeMode::Nearest) {
+            neareastButton->set_pushed(true);
+        } else if (mClipResizeMode == EClipResizeMode::Bilinear) {
+            linearButton->set_pushed(true);
+        }
+
+        auto inputPanel = new Widget{panel};
+        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+        mCopyResizeXTextBox = new TextBox{inputPanel};
+        mCopyResizeXTextBox->set_editable(true);
+        mCopyResizeXTextBox->set_value("1");
+        mCopyResizeXTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mCopyResizeXTextBox->set_font_size(15);
+
+        mCopyResizeYTextBox = new TextBox{inputPanel};
+        mCopyResizeYTextBox->set_editable(true);
+        mCopyResizeYTextBox->set_value("1");
+        mCopyResizeYTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mCopyResizeYTextBox->set_font_size(15);
+    }
+
     // Crop box
     {
         // Main panel for the Crop section, using a vertical layout to stack elements
@@ -920,6 +967,48 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                 try {
                     copyImageCanvasToClipboard();
                 } catch (const runtime_error& e) { showErrorDialog(fmt::format("Failed to copy image to clipboard: {}", e.what())); }
+            } else if (auto imageSize = mImageCanvas->imageDataSize(); imageSize.x() > 0 && imageSize.y() > 0) {
+                int resizedImageWidth = imageSize.x() * std::stof(mCopyResizeXTextBox->value());
+                int resizedImageHeight = imageSize.y() * std::stof(mCopyResizeYTextBox->value());
+
+                clip::image_spec imageMetadata;
+                imageMetadata.width = resizedImageWidth;
+                imageMetadata.height = resizedImageHeight;
+                imageMetadata.bits_per_pixel = 32;
+                imageMetadata.bytes_per_row = imageMetadata.bits_per_pixel / 8 * imageMetadata.width;
+
+                imageMetadata.red_mask = 0x000000ff;
+                imageMetadata.green_mask = 0x0000ff00;
+                imageMetadata.blue_mask = 0x00ff0000;
+                imageMetadata.alpha_mask = 0xff000000;
+                imageMetadata.red_shift = 0;
+                imageMetadata.green_shift = 8;
+                imageMetadata.blue_shift = 16;
+                imageMetadata.alpha_shift = 24;
+
+                auto resizeFunc = [this, &imageSize](const vector<float>& data) {
+                    return resizeImageArray(data, imageSize.x(), imageSize.y());
+                };
+
+                auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
+
+                // // Print image array
+                // for (int i = 0; i < imageSize.y(); i++) {
+                //     for (int j = 0; j < imageSize.x(); j++) {
+                //         printf("%f %f %f %f\n", floatData[4 * (i * imageSize.x() + j)], floatData[4 * (i * imageSize.x() + j) + 1], floatData[4 * (i * imageSize.x() + j) + 2], floatData[4 * (i * imageSize.x() + j) + 3]);
+                //     }
+                //     std::cout << std::endl;
+                // }
+
+                // auto imageDataResized = resizeImageArray(imageData, imageSize.x(), imageSize.y());
+
+                clip::image image(imageDataResized.data(), imageMetadata);
+
+                if (clip::set_image(image)) {
+                    tlog::success() << "Image copied to clipboard.";
+                } else {
+                    tlog::error() << "Failed to copy image to clipboard.";
+                }
             }
 
             return true;
@@ -2515,4 +2604,101 @@ shared_ptr<Image> ImageViewer::imageByName(string_view imageName) {
     }
 }
 
-} // namespace tev
+template <typename T>
+std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const int inputWidth, const int inputHeight)
+{
+    float resizeX = std::stof(mCopyResizeXTextBox->value());
+    float resizeY = std::stof(mCopyResizeYTextBox->value());
+
+    // Ensure valid ratios
+    if (resizeX <= 0 || resizeY <= 0)
+    {
+        throw std::runtime_error("Resize ratio must be greater than zero.");
+    }
+    else if (resizeX == 1 && resizeY == 1)
+    {
+        return arr;
+    }
+
+    const int outWidth = static_cast<int>(std::round(inputWidth * resizeX));
+    const int outHeight = static_cast<int>(std::round(inputHeight * resizeY));
+
+    std::vector<T> out(outWidth * outHeight * 4 /*channel*/);
+
+    if (mClipResizeMode == EClipResizeMode::Nearest)
+    {
+        tlog::info() << "Using nearest neighbor resize";
+        for (int y = 0; y < outHeight; ++y)
+        {
+            for (int x = 0; x < outWidth; ++x)
+            {
+                const int inX = static_cast<int>(x / resizeX);
+                const int inY = static_cast<int>(y / resizeY);
+
+                const int inIndex = (inY * inputWidth + inX) * 4;
+                const int outIndex = (y * outWidth + x) * 4;
+
+                out[outIndex + 0] = arr[inIndex + 0];
+                out[outIndex + 1] = arr[inIndex + 1];
+                out[outIndex + 2] = arr[inIndex + 2];
+                out[outIndex + 3] = arr[inIndex + 3];
+            }
+        }
+    }
+    else if (mClipResizeMode == EClipResizeMode::Bilinear)
+    {
+        tlog::info() << "Using bilinear resize";
+        for (int y = 0; y < outHeight; ++y)
+        {
+            for (int x = 0; x < outWidth; ++x)
+            {
+                const float inX = static_cast<float>(x) / resizeX;
+                const float inY = static_cast<float>(y) / resizeY;
+
+                const int inX0 = static_cast<int>(std::floor(inX));
+                const int inY0 = static_cast<int>(std::floor(inY));
+
+                const int inX1 = std::min(inX0 + 1, inputWidth - 1);
+                const int inY1 = std::min(inY0 + 1, inputHeight - 1);
+
+                const float xRatio = inX - inX0;
+                const float yRatio = inY - inY0;
+
+                if (xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1)
+                {
+                    tlog::warning() << "Invalid ratio: " << xRatio << ", " << yRatio;
+                }
+
+                const int inIndex00 = (inY0 * inputWidth + inX0) * 4;
+                const int inIndex01 = (inY0 * inputWidth + inX1) * 4;
+                const int inIndex10 = (inY1 * inputWidth + inX0) * 4;
+                const int inIndex11 = (inY1 * inputWidth + inX1) * 4;
+
+                const int outIndex = (y * outWidth + x) * 4;
+
+                for (int c = 0; c < 4; ++c)
+                {
+                    float val00 = (static_cast<float>(arr[inIndex00 + c]));
+                    float val01 = (static_cast<float>(arr[inIndex01 + c]));
+                    float val10 = (static_cast<float>(arr[inIndex10 + c]));
+                    float val11 = (static_cast<float>(arr[inIndex11 + c]));
+
+                    // Interpolating horizontally first
+                    float val0 = val00 * (1 - xRatio) + val01 * xRatio;
+                    float val1 = val10 * (1 - xRatio) + val11 * xRatio;
+
+                    // Then interpolating vertically
+                    float val = val0 * (1 - yRatio) + val1 * yRatio;
+
+                    // Clamp the value between 0 and 255 before casting
+                    val = std::max(0.0f, std::min(1.0f, val));
+
+                    out[outIndex + c] = static_cast<T>((val));
+                }
+            }
+        }
+    }
+
+    return out;
+}
+}

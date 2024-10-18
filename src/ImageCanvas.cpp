@@ -708,9 +708,12 @@ std::vector<float> ImageCanvas::getHdrImageData(bool divideAlpha, int priority) 
     return result;
 }
 
-std::vector<char> ImageCanvas::getLdrImageData(bool divideAlpha, int priority) const {
+std::vector<char> ImageCanvas::getLdrImageData(bool divideAlpha, int priority, const std::function<std::vector<float>(std::vector<float>&)> processHdr) const {
     // getHdrImageData always returns four floats per pixel (RGBA).
     auto floatData = getHdrImageData(divideAlpha, priority);
+    if (processHdr) {
+        floatData = processHdr(floatData);
+    }
     std::vector<char> result(floatData.size());
 
     ThreadPool::global().parallelFor<size_t>(

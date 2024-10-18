@@ -295,6 +295,17 @@ private:
     bool mSupportsHdr = false;
     nanogui::Button* mClipToLdrButton;
 
+    // Clipboard size modifier
+    nanogui::TextBox* mCopyResizeXTextBox;
+    nanogui::TextBox* mCopyResizeYTextBox;
+    enum class EClipResizeMode {
+        Nearest,
+        Bilinear,
+    };
+    EClipResizeMode mClipResizeMode = EClipResizeMode::Nearest;
+    template <typename T>
+    std::vector<T> resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight);
+
     int mDidFitToImage = 0;
 
     nanogui::Vector2i mMaxSize = {8192, 8192};
