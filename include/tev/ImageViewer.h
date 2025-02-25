@@ -221,6 +221,11 @@ private:
     nanogui::TextBox* mCropXmaxTextBox;
     nanogui::TextBox* mCropYmaxTextBox;
 
+    std::string mCropListFilename = "cropList.txt";
+    nanogui::TextBox* mCropListPathTextBox = nullptr;
+    std::fstream mCropListFile;
+    nanogui::VScrollPanel* mCropListContainer;
+
     std::shared_ptr<BackgroundImagesLoader> mImagesLoader;
 
     std::shared_ptr<Image> mCurrentImage;
