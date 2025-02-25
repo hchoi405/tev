@@ -321,10 +321,8 @@ ImageViewer::ImageViewer(
         auto clipResizePanel = new Widget{panel};
         clipResizePanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
 
-        auto selectResizeMode = [this](EClipResizeMode mode) {
-            mClipResizeMode = mode;
-        };
-        
+        auto selectResizeMode = [this](EClipResizeMode mode) { mClipResizeMode = mode; };
+
         auto neareastButton = new Button{clipResizePanel, "Nearest"};
         neareastButton->set_flags(Button::RadioButton);
         neareastButton->set_font_size(15);
@@ -368,7 +366,7 @@ ImageViewer::ImageViewer(
         new Label{panel, "Crop", "sans-bold", 25};
 
         // Create a child panel for the input fields, arranged horizontally
-        auto inputPanel = new Widget{panel};  // This widget is the container for the input fields
+        auto inputPanel = new Widget{panel}; // This widget is the container for the input fields
         inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 4, 1});
 
         // Min X text box
@@ -407,7 +405,6 @@ ImageViewer::ImageViewer(
         mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
         mCropYmaxTextBox->set_font_size(15);
 
-
         // Callback for when the user modifies any of the text boxes
         auto updateCrop = [this]() -> bool {
             try {
@@ -419,18 +416,18 @@ ImageViewer::ImageViewer(
                 // Update the crop box with the new values
                 mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
 
-                return true;  // Callback successfully handled the change
-            } catch (const std::exception &e) {
+                return true; // Callback successfully handled the change
+            } catch (const std::exception& e) {
                 std::cerr << "Invalid input: " << e.what() << std::endl;
-                return false;  // Return false to indicate failure
+                return false; // Return false to indicate failure
             }
         };
 
         // Set callbacks for the input boxes
-        mCropXminTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
-        mCropYminTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
-        mCropXmaxTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
-        mCropYmaxTextBox->set_callback([updateCrop](const std::string &) { return updateCrop(); });
+        mCropXminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropYminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropXmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropYmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
     }
 
     // Image selection
@@ -982,7 +979,8 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                 // // Print image array
                 // for (int i = 0; i < imageSize.y(); i++) {
                 //     for (int j = 0; j < imageSize.x(); j++) {
-                //         printf("%f %f %f %f\n", floatData[4 * (i * imageSize.x() + j)], floatData[4 * (i * imageSize.x() + j) + 1], floatData[4 * (i * imageSize.x() + j) + 2], floatData[4 * (i * imageSize.x() + j) + 3]);
+                //         printf("%f %f %f %f\n", floatData[4 * (i * imageSize.x() + j)], floatData[4 * (i * imageSize.x() + j) + 1],
+                //         floatData[4 * (i * imageSize.x() + j) + 2], floatData[4 * (i * imageSize.x() + j) + 3]);
                 //     }
                 //     std::cout << std::endl;
                 // }
@@ -2247,7 +2245,6 @@ void ImageViewer::updateLayout() {
     mFilter->set_fixed_width(mSidebarLayout->fixed_width() - 50);
     perform_layout();
 
-
     // With a changed layout the relative position of the mouse
     // within children changes and therefore should get updated.
     // nanogui does not handle this for us.
@@ -2411,19 +2408,14 @@ shared_ptr<Image> ImageViewer::imageByName(string_view imageName) {
     }
 }
 
-template <typename T>
-std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const int inputWidth, const int inputHeight)
-{
+template <typename T> std::vector<T> ImageViewer::resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight) {
     float resizeX = std::stof(mCopyResizeXTextBox->value());
     float resizeY = std::stof(mCopyResizeYTextBox->value());
 
     // Ensure valid ratios
-    if (resizeX <= 0 || resizeY <= 0)
-    {
+    if (resizeX <= 0 || resizeY <= 0) {
         throw std::runtime_error("Resize ratio must be greater than zero.");
-    }
-    else if (resizeX == 1 && resizeY == 1)
-    {
+    } else if (resizeX == 1 && resizeY == 1) {
         return arr;
     }
 
@@ -2432,13 +2424,10 @@ std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const in
 
     std::vector<T> out(outWidth * outHeight * 4 /*channel*/);
 
-    if (mClipResizeMode == EClipResizeMode::Nearest)
-    {
+    if (mClipResizeMode == EClipResizeMode::Nearest) {
         tlog::info() << "Using nearest neighbor resize";
-        for (int y = 0; y < outHeight; ++y)
-        {
-            for (int x = 0; x < outWidth; ++x)
-            {
+        for (int y = 0; y < outHeight; ++y) {
+            for (int x = 0; x < outWidth; ++x) {
                 const int inX = static_cast<int>(x / resizeX);
                 const int inY = static_cast<int>(y / resizeY);
 
@@ -2451,14 +2440,10 @@ std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const in
                 out[outIndex + 3] = arr[inIndex + 3];
             }
         }
-    }
-    else if (mClipResizeMode == EClipResizeMode::Bilinear)
-    {
+    } else if (mClipResizeMode == EClipResizeMode::Bilinear) {
         tlog::info() << "Using bilinear resize";
-        for (int y = 0; y < outHeight; ++y)
-        {
-            for (int x = 0; x < outWidth; ++x)
-            {
+        for (int y = 0; y < outHeight; ++y) {
+            for (int x = 0; x < outWidth; ++x) {
                 const float inX = static_cast<float>(x) / resizeX;
                 const float inY = static_cast<float>(y) / resizeY;
 
@@ -2471,8 +2456,7 @@ std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const in
                 const float xRatio = inX - inX0;
                 const float yRatio = inY - inY0;
 
-                if (xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1)
-                {
+                if (xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
                     tlog::warning() << "Invalid ratio: " << xRatio << ", " << yRatio;
                 }
 
@@ -2483,8 +2467,7 @@ std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const in
 
                 const int outIndex = (y * outWidth + x) * 4;
 
-                for (int c = 0; c < 4; ++c)
-                {
+                for (int c = 0; c < 4; ++c) {
                     float val00 = (static_cast<float>(arr[inIndex00 + c]));
                     float val01 = (static_cast<float>(arr[inIndex01 + c]));
                     float val10 = (static_cast<float>(arr[inIndex10 + c]));
@@ -2508,4 +2491,4 @@ std::vector<T> ImageViewer::resizeImageArray(const std::vector<T> &arr, const in
 
     return out;
 }
-}
+} // namespace tev
