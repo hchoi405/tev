@@ -434,6 +434,270 @@ ImageViewer::ImageViewer(
         mCropYminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
         mCropXmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
         mCropYmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+
+        // Create a panel for the crop list file path
+        auto cropFilePathPanel = new Widget{panel};
+        cropFilePathPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5, 0});
+
+        // Label for the crop list file path
+        new Label{cropFilePathPanel, "Crop List File:", "sans-bold"};
+
+        // Create a button to browse for a new crop list file
+        auto browseButton = new Button{cropFilePathPanel, "", FA_FOLDER_OPEN};
+        browseButton->set_font_size(15);
+        browseButton->set_tooltip("Browse for a crop list file");
+
+        // Create the text box to display and edit the crop list file path directly in the panel
+        mCropListPathTextBox = new TextBox{cropFilePathPanel};
+        mCropListPathTextBox->set_editable(true);
+        mCropListPathTextBox->set_value(mCropListFilename);
+        mCropListPathTextBox->set_font_size(15);
+        mCropListPathTextBox->set_tooltip("Path to the crop list file");
+        mCropListPathTextBox->set_alignment(TextBox::Alignment::Left);
+        mCropListPathTextBox->set_fixed_width(mSidebar->fixed_width() - 130); // Give enough width for the text box
+
+        auto cropWindowPanel = new Widget{panel};
+        cropWindowPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2, 1});
+
+        auto cropButtonPanel = new Widget{cropWindowPanel};
+        cropButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill});
+        auto cropButtonAdd = new Button{cropButtonPanel, "Add", FA_PLUS};
+        auto cropButtonRemove = new Button{cropButtonPanel, "Remove", FA_MINUS};
+        cropButtonAdd->set_font_size(15);
+        cropButtonRemove->set_font_size(15);
+
+        mCropListContainer = new VScrollPanel{cropWindowPanel};
+        mCropListContainer->set_fixed_width(mSidebarLayout->fixed_width());
+
+        auto cropListScrollContent = new Widget{mCropListContainer};
+        cropListScrollContent->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill});
+
+        mCropListFile = std::fstream(mCropListFilename, std::ios::in | std::ios::out);
+        // Create the file if it doesn't exist
+        if (!mCropListFile) {
+            mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+        }
+
+        auto addCropButtonCallback = [this, cropListScrollContent](int x1, int y1, int x2, int y2) {
+            auto cropWindow = new Box2i(Vector2i(x1, y1), Vector2i(x2, y2));
+            auto button = new Button{
+                cropListScrollContent,
+                fmt::format("({}, {}) - ({}, {}) (w:{}, h:{})", x1, y1, x2, y2, x2 - x1, y2 - y1),
+            };
+            button->set_font_size(15);
+            button->set_callback([this, cropWindow]() {
+                mImageCanvas->setCrop(*cropWindow);
+                mCurrCrop = *cropWindow;
+            });
+        };
+
+        // Setup callbacks for the file path text box and browse button
+        mCropListPathTextBox->set_callback([this, cropListScrollContent, addCropButtonCallback](const std::string& newPath) -> bool {
+            if (newPath != mCropListFilename) {
+                mCropListFilename = newPath;
+                // Close current file if open
+                if (mCropListFile.is_open()) {
+                    mCropListFile.close();
+                }
+
+                // Clear existing crop list UI
+                while (cropListScrollContent->child_count() > 0) {
+                    cropListScrollContent->remove_child_at(cropListScrollContent->child_count() - 1);
+                }
+
+                // Check if the file exists and try to load crop entries
+                bool fileExists = fs::exists(toPath(newPath));
+
+                if (fileExists) {
+                    // Attempt to open the existing file for reading and writing
+                    mCropListFile = std::fstream(mCropListFilename, std::ios::in | std::ios::out);
+
+                    // Read contents from the file and add them to the UI
+                    std::string line;
+                    while (std::getline(mCropListFile, line)) {
+                        std::istringstream iss(line);
+                        int x1, y1, x2, y2;
+                        if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                            std::cerr << "Invalid crop window: " << line << std::endl;
+                            continue;
+                        }
+                        addCropButtonCallback(x1, y1, x2, y2);
+                    }
+
+                    // File already open for reading and writing
+                } else {
+                    // Create a new file if it doesn't exist
+                    mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+                    if (!mCropListFile) {
+                        std::cerr << "Failed to create crop list file: " << mCropListFilename << std::endl;
+                        return false;
+                    }
+                }
+
+                // Update layout to reflect changes
+                updateLayout();
+                perform_layout();
+            }
+            return true;
+        });
+
+        // Add a callback to the browse button to open a file dialog
+        browseButton->set_callback([this, cropListScrollContent, addCropButtonCallback]() {
+            try {
+                // First check if the file exists using a regular file dialog (not save mode)
+                auto fileDialog = nanogui::file_dialog(
+                    {{"txt", "Text File"}},
+                    false); // false for open dialog mode, won't ask for replacement
+
+                if (!fileDialog.empty()) {
+                    std::string newPath = fileDialog;
+                    mCropListPathTextBox->set_value(newPath);
+
+                    // Clear existing crop list UI
+                    while (cropListScrollContent->child_count() > 0) {
+                        cropListScrollContent->remove_child_at(cropListScrollContent->child_count() - 1);
+                    }
+
+                    // Also reset the current crop selection
+                    mImageCanvas->setCrop(std::nullopt);
+                    mCurrCrop = std::nullopt;
+
+                    // Check if the file exists
+                    bool fileExists = fs::exists(toPath(newPath));
+
+                    if (fileExists) {
+                        // File exists, we'll open it
+                        if (mCropListFile.is_open()) {
+                            mCropListFile.close();
+                        }
+
+                        // Open the existing file for reading and writing
+                        mCropListFile = std::fstream(newPath, std::ios::in | std::ios::out);
+
+                        // Read and parse the crop entries
+                        mCropListFile.seekg(0, std::ios::beg); // Reset position to beginning of file
+                        std::string line;
+                        while (std::getline(mCropListFile, line)) {
+                            std::istringstream iss(line);
+                            int x1, y1, x2, y2;
+                            if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                                std::cerr << "Invalid crop window: " << line << std::endl;
+                                continue;
+                            }
+                            addCropButtonCallback(x1, y1, x2, y2);
+                        }
+                    } else {
+                        // File doesn't exist, create it
+                        mCropListFilename = newPath;
+                        if (mCropListFile.is_open()) {
+                            mCropListFile.close();
+                        }
+                        mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+                        if (!mCropListFile) {
+                            std::cerr << "Failed to create crop list file: " << mCropListFilename << std::endl;
+                        }
+                    }
+
+                    // Update the stored filename
+                    mCropListFilename = newPath;
+
+                    // Update layout
+                    updateLayout();
+                    perform_layout();
+                }
+                // If fileDialog is empty, the user canceled the dialog, so we do nothing
+            } catch (const std::exception& e) {
+                // Handle any exceptions that may occur during file dialog
+                std::cerr << "Error in file dialog: " << e.what() << std::endl;
+                // Don't change the path if there was an error
+            }
+        });
+
+        // Read each line and parse the crop window
+        std::string line;
+        while (std::getline(mCropListFile, line)) {
+            std::istringstream iss(line);
+            int x1, y1, x2, y2;
+            if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                std::cerr << "Invalid crop window: " << line << std::endl;
+                continue;
+            }
+            addCropButtonCallback(x1, y1, x2, y2);
+        }
+
+        // Bind callbacks to the add and remove buttons
+        cropButtonAdd->set_callback([this, addCropButtonCallback]() {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                if (maxX - minX < CROP_MIN_SIZE || maxY - minY < CROP_MIN_SIZE) {
+                    std::cerr << "Crop window too small. Minimum size is " << CROP_MIN_SIZE << std::endl;
+                    return;
+                }
+
+                // Update the crop box with the new values
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
+                // Add the crop window to the list
+                addCropButtonCallback(minX, minY, maxX, maxY);
+                // Update the layout
+                updateLayout();
+                perform_layout();
+                // Update the crop list file
+                std::fstream cropListFile(mCropListFilename, std::ios::app);
+                cropListFile << minX << " " << minY << " " << maxX << " " << maxY << std::endl;
+                mCropListContainer->set_scroll(1.f);
+            } catch (const std::exception& e) { std::cerr << "Invalid input: " << e.what() << std::endl; }
+        });
+
+        cropButtonRemove->set_callback([this, cropListScrollContent]() {
+            if (cropListScrollContent->children().empty()) {
+                return;
+            }
+
+            auto parseButtonCaption = [](const std::string& caption) -> std::optional<Box2i> {
+                int x1, y1, x2, y2;
+                if (sscanf(caption.c_str(), "(%d, %d) - (%d, %d)", &x1, &y1, &x2, &y2) == 4) {
+                    return Box2i(Vector2i(x1, y1), Vector2i(x2, y2));
+                }
+                return std::nullopt;
+            };
+
+            // Remove first item of the list
+            auto firstChild = cropListScrollContent->children().front();
+            cropListScrollContent->remove_child(firstChild);
+            if (cropListScrollContent->children().size() > 0) {
+                auto secondChild = cropListScrollContent->children().front();
+                // Set the crop window of the second child
+                auto button = dynamic_cast<Button*>(secondChild);
+                if (button) {
+                    auto cropWindow = parseButtonCaption(button->caption());
+                    if (cropWindow) {
+                        mImageCanvas->setCrop(*cropWindow);
+                        mCurrCrop = *cropWindow;
+                    }
+                }
+            }
+
+            // Update the layout
+            updateLayout();
+            perform_layout();
+            // Clear the file and write the remaining lines
+            std::fstream cropListFile(mCropListFilename, std::ios::out);
+            for (auto& child : cropListScrollContent->children()) {
+                auto button = dynamic_cast<Button*>(child);
+                if (button) {
+                    auto cropWindow = parseButtonCaption(button->caption());
+                    if (cropWindow) {
+                        cropListFile << cropWindow->min.x() << " " << cropWindow->min.y() << " " << cropWindow->max.x() << " "
+                                     << cropWindow->max.y() << std::endl;
+                    }
+                }
+            }
+            cropListFile.close();
+        });
     }
 
     // Image selection
@@ -965,8 +1229,8 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                     copyImageCanvasToClipboard();
                 } catch (const runtime_error& e) { showErrorDialog(fmt::format("Failed to copy image to clipboard: {}", e.what())); }
             } else if (auto imageSize = mImageCanvas->imageDataSize(); imageSize.x() > 0 && imageSize.y() > 0) {
-                int resizedImageWidth = imageSize.x() * std::stof(mCopyResizeXTextBox->value());
-                int resizedImageHeight = imageSize.y() * std::stof(mCopyResizeYTextBox->value());
+                int resizedImageWidth = int(imageSize.x() * std::stof(mCopyResizeXTextBox->value()));
+                int resizedImageHeight = int(imageSize.y() * std::stof(mCopyResizeYTextBox->value()));
 
                 clip::image_spec imageMetadata;
                 imageMetadata.width = resizedImageWidth;
@@ -2444,6 +2708,10 @@ void ImageViewer::updateLayout() {
     double x, y;
     glfwGetCursorPos(m_glfw_window, &x, &y);
     cursor_pos_callback_event(x, y);
+
+    int height = min(100, mCropListContainer->preferred_size(m_nvg_context).y());
+    mCropListContainer->set_fixed_height(height);
+    perform_layout();
 }
 
 void ImageViewer::updateTitle() {
