@@ -344,7 +344,12 @@ ImageViewer::ImageViewer(
         auto panel = new Widget{mSidebarLayout};
         panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
-        new Label{panel, "Copy Resize", "sans-bold", 25};
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+
+        new Label{headerPanel, "Copy Resize", "sans-bold", 25};
+
+        mCopyResizeShowHideButton = createShowHideButton(panel, "Show/Hide copy resize box");
 
         auto clipResizePanel = new Widget{panel};
         clipResizePanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
@@ -390,8 +395,12 @@ ImageViewer::ImageViewer(
         auto panel = new Widget{mSidebarLayout};
         panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
         // Add the label in the first row
-        new Label{panel, "Crop", "sans-bold", 25};
+        new Label{headerPanel, "Crop", "sans-bold", 25};
+        // Create a button to toggle the visibility of the crop box
+        mCropShowHideButton = createShowHideButton(panel, "Show/Hide crop box");
 
         // Create a child panel for the input fields, arranged horizontally
         auto inputPanel = new Widget{panel}; // This widget is the container for the input fields
