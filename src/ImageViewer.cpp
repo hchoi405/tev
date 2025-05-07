@@ -780,21 +780,27 @@ ImageViewer::ImageViewer(
             if (!mCurrentImage) return;
 
             // Get current channel group
-            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
-            if (channels.empty()) return;
+            const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
+            if (channelImages.empty()) return;
 
             auto size = mCurrentImage->size();
             Vector2i maxPos{0, 0};
             float maxVal = -numeric_limits<float>::infinity();
 
-            // Find maximum value across all channels in the current group
-            for (const auto& channelName : channels) {
-                const auto* channel = mCurrentImage->channel(channelName);
-                if (!channel) continue;
+            const Box2i region = mImageCanvas->cropInImageCoords();
+            int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
+            if (region.isValid()) {
+                cropMinX = region.min.x();
+                cropMaxX = region.max.x();
+                cropMinY = region.min.y();
+                cropMaxY = region.max.y();
+            }
 
-                for (int y = 0; y < size.y(); ++y) {
-                    for (int x = 0; x < size.x(); ++x) {
-                        float val = channel->eval({x, y});
+            // Find maximum value across all channels in the current group, within crop region if set
+            for (const auto& channel : channelImages) {
+                for (int y = cropMinY; y < cropMaxY; ++y) {
+                    for (int x = cropMinX; x < cropMaxX; ++x) {
+                        float val = channel.eval({x, y});
                         if (val > maxVal) {
                             maxVal = val;
                             maxPos = {x, y};
@@ -815,21 +821,27 @@ ImageViewer::ImageViewer(
             if (!mCurrentImage) return;
 
             // Get current channel group
-            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
-            if (channels.empty()) return;
+            const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
+            if (channelImages.empty()) return;
 
             auto size = mCurrentImage->size();
             Vector2i minPos{0, 0};
             float minVal = numeric_limits<float>::infinity();
 
-            // Find minimum value across all channels in the current group
-            for (const auto& channelName : channels) {
-                const auto* channel = mCurrentImage->channel(channelName);
-                if (!channel) continue;
+            const Box2i region = mImageCanvas->cropInImageCoords();
+            int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
+            if (region.isValid()) {
+                cropMinX = region.min.x();
+                cropMaxX = region.max.x();
+                cropMinY = region.min.y();
+                cropMaxY = region.max.y();
+            }
 
-                for (int y = 0; y < size.y(); ++y) {
-                    for (int x = 0; x < size.x(); ++x) {
-                        float val = channel->eval({x, y});
+            // Find minimum value across all channels in the current group
+            for (const auto& channel : channelImages) {
+                for (int y = cropMinY; y < cropMaxY; ++y) {
+                    for (int x = cropMinX; x < cropMaxX; ++x) {
+                        float val = channel.eval({x, y});
                         if (val < minVal) {
                             minVal = val;
                             minPos = {x, y};
@@ -892,20 +904,26 @@ ImageViewer::ImageViewer(
                 if (minVal > maxVal) std::swap(minVal, maxVal);
 
                 // Get current channel group
-                auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
-                if (channels.empty()) return;
+                const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
+                if (channelImages.empty()) return;
 
                 auto size = mCurrentImage->size();
                 mFoundPixels.clear();
 
-                // Find all pixels in the given range
-                for (const auto& channelName : channels) {
-                    const auto* channel = mCurrentImage->channel(channelName);
-                    if (!channel) continue;
+                const Box2i region = mImageCanvas->cropInImageCoords();
+                int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
+                if (region.isValid()) {
+                    cropMinX = region.min.x();
+                    cropMaxX = region.max.x();
+                    cropMinY = region.min.y();
+                    cropMaxY = region.max.y();
+                }
 
-                    for (int y = 0; y < size.y(); ++y) {
-                        for (int x = 0; x < size.x(); ++x) {
-                            float val = channel->eval({x, y});
+                // Find all pixels in the given range
+                for (const auto& channel : channelImages) {
+                    for (int y = cropMinY; y < cropMaxY; ++y) {
+                        for (int x = cropMinX; x < cropMaxX; ++x) {
+                            float val = channel.eval({x, y});
                             if (val >= minVal && val <= maxVal) {
                                 mFoundPixels.push_back({{x, y}, val});
                             }

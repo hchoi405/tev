@@ -102,7 +102,6 @@ public:
 
     void purgeCanvasStatistics(int imageId);
 
-private:
     static std::vector<Channel> channelsFromImages(
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
@@ -111,6 +110,7 @@ private:
         int priority
     );
 
+private:
     static Task<std::shared_ptr<CanvasStatistics>> computeCanvasStatistics(
         std::shared_ptr<Image> image,
         std::shared_ptr<Image> reference,
