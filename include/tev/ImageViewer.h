@@ -175,6 +175,8 @@ public:
     BackgroundImagesLoader& imagesLoader() const { return *mImagesLoader; }
     Ipc& ipc() const { return *mIpc; }
 
+    void focusPixel(const nanogui::Vector2i& pixelPos);
+
 private:
     void updateFilter();
     void updateLayout();
@@ -310,6 +312,16 @@ private:
     int mDidFitToImage = 0;
 
     nanogui::Vector2i mMaxSize = {8192, 8192};
+
+    // Pixel locator
+    nanogui::Button* mPixelLocatorShowHideButton = nullptr;
+    nanogui::TextBox* mRangeMinTextBox = nullptr;
+    nanogui::TextBox* mRangeMaxTextBox = nullptr;
+    nanogui::Button* mFindRangeButton = nullptr;
+    nanogui::Button* mFindNextRangeButton = nullptr;
+    nanogui::Label* mStatusLabel = nullptr;
+    std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
+    int mCurrentFoundPixelIdx = -1;
 };
 
 } // namespace tev
