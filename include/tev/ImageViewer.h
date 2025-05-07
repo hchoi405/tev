@@ -178,6 +178,7 @@ public:
     void pasteImagesFromClipboard();
 
     void showErrorDialog(std::string_view message);
+    void focusPixel(const nanogui::Vector2i& pixelPos);
 
 private:
     void updateFilter();
@@ -317,6 +318,16 @@ private:
     bool mInitialized = false;
 
     std::unique_ptr<std::thread> mFileDialogThread;
+
+    // Pixel locator
+    nanogui::Button* mPixelLocatorShowHideButton = nullptr;
+    nanogui::TextBox* mRangeMinTextBox = nullptr;
+    nanogui::TextBox* mRangeMaxTextBox = nullptr;
+    nanogui::Button* mFindRangeButton = nullptr;
+    nanogui::Button* mFindNextRangeButton = nullptr;
+    nanogui::Label* mStatusLabel = nullptr;
+    std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
+    int mCurrentFoundPixelIdx = -1;
 };
 
 } // namespace tev

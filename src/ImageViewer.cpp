@@ -275,6 +275,28 @@ ImageViewer::ImageViewer(
         );
     }
 
+    // Helper for creating a show/hide button for panels
+    auto createShowHideButton = [this](Widget* parentPanel, const string& tooltip) -> Button* {
+        // Assume the first child is the header panel
+        auto headerPanel = parentPanel->children().front();
+
+        auto button = new Button{headerPanel, "", FA_EYE};
+        button->set_font_size(15);
+        button->set_flags(Button::ToggleButton);
+        button->set_pushed(true);
+        button->set_tooltip(tooltip);
+        button->set_change_callback([this, parentPanel](bool value) {
+            // Hide all children except the first one (which is the header panel)
+            for (auto& child : parentPanel->children()) {
+                if (child != parentPanel->children().front()) {
+                    child->set_visible(value);
+                }
+            }
+            updateLayout();
+        });
+        return button;
+    };
+
     // Error metrics
     {
         mMetricButtonContainer = new Widget{mSidebarLayout};
@@ -698,6 +720,233 @@ ImageViewer::ImageViewer(
             }
             cropListFile.close();
         });
+    }
+
+    // Pixel locator
+    {
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5, 0});
+
+        new Label{headerPanel, "Pixel Locator", "sans-bold", 25};
+        mPixelLocatorShowHideButton = createShowHideButton(panel, "Show/Hide pixel locator");
+
+        //
+        auto updateStatusText = [this](const Vector2i& pixelPos, float value, const string& type, const std::string& detail = "") {
+            if (!mStatusLabel || !mCurrentImage) return;
+
+            // Get the channels in the current group
+            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+            if (channels.empty()) return;
+
+            std::string channelName = channels[0];
+            if (channels.size() > 1) {
+                channelName = mCurrentGroup;
+            }
+
+            std::string statusText = fmt::format(
+                "{} Value Found\nPixel: ({}, {})\nValue: {:.6f}\nChannel: {}",
+                type, pixelPos.x(), pixelPos.y(), value, channelName
+            );
+
+            if (!detail.empty()) {
+                statusText += "\n" + detail;
+            }
+
+            mStatusLabel->set_caption(statusText);
+        };
+
+        // Create buttons for different search criteria in a horizontal layout
+        auto searchPanel = new Widget{panel};
+        searchPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 3, 1});
+
+        auto findMaxButton = new Button{searchPanel, "Find Max"};
+        findMaxButton->set_font_size(15);
+        findMaxButton->set_tooltip("Find the pixel with the maximum value in the current channel/group");
+        findMaxButton->set_callback([this, updateStatusText]() {
+            if (!mCurrentImage) return;
+
+            // Get current channel group
+            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+            if (channels.empty()) return;
+
+            auto size = mCurrentImage->size();
+            Vector2i maxPos{0, 0};
+            float maxVal = -numeric_limits<float>::infinity();
+
+            // Find maximum value across all channels in the current group
+            for (const auto& channelName : channels) {
+                const auto* channel = mCurrentImage->channel(channelName);
+                if (!channel) continue;
+
+                for (int y = 0; y < size.y(); ++y) {
+                    for (int x = 0; x < size.x(); ++x) {
+                        float val = channel->eval({x, y});
+                        if (val > maxVal) {
+                            maxVal = val;
+                            maxPos = {x, y};
+                        }
+                    }
+                }
+            }
+
+            // Focus on the found pixel
+            focusPixel(maxPos);
+            updateStatusText(maxPos, maxVal, "Maximum");
+        });
+
+        auto findMinButton = new Button{searchPanel, "Find Min"};
+        findMinButton->set_font_size(15);
+        findMinButton->set_tooltip("Find the pixel with the minimum value in the current channel/group");
+        findMinButton->set_callback([this, updateStatusText]() {
+            if (!mCurrentImage) return;
+
+            // Get current channel group
+            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+            if (channels.empty()) return;
+
+            auto size = mCurrentImage->size();
+            Vector2i minPos{0, 0};
+            float minVal = numeric_limits<float>::infinity();
+
+            // Find minimum value across all channels in the current group
+            for (const auto& channelName : channels) {
+                const auto* channel = mCurrentImage->channel(channelName);
+                if (!channel) continue;
+
+                for (int y = 0; y < size.y(); ++y) {
+                    for (int x = 0; x < size.x(); ++x) {
+                        float val = channel->eval({x, y});
+                        if (val < minVal) {
+                            minVal = val;
+                            minPos = {x, y};
+                        }
+                    }
+                }
+            }
+
+            // Focus on the found pixel
+            focusPixel(minPos);
+            updateStatusText(minPos, minVal, "Minimum");
+        });
+
+        // Range search - more compact layout with labels inline
+        auto rangePanel = new Widget{panel};
+        rangePanel->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Middle, 2, 1});
+
+        // First row: labels and inputs side by side
+        new Label{rangePanel, "Min:", "sans", 15};
+        mRangeMinTextBox = new TextBox{rangePanel};
+        mRangeMinTextBox->set_editable(true);
+        mRangeMinTextBox->set_value("0.0");
+        mRangeMinTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mRangeMinTextBox->set_font_size(15);
+        mRangeMinTextBox->set_fixed_width(55);
+
+        new Label{rangePanel, "Max:", "sans", 15};
+        mRangeMaxTextBox = new TextBox{rangePanel};
+        mRangeMaxTextBox->set_editable(true);
+        mRangeMaxTextBox->set_value("1.0");
+        mRangeMaxTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mRangeMaxTextBox->set_font_size(15);
+        mRangeMaxTextBox->set_fixed_width(55);
+
+        // Second row: Search buttons
+        auto rangeButtonPanel = new Widget{panel};
+        rangeButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 3, 1});
+
+        mFindRangeButton = new Button{rangeButtonPanel, "Find First"};
+        mFindRangeButton->set_font_size(15);
+        mFindRangeButton->set_tooltip("Find the first pixel with value in the specified range");
+
+        mFindNextRangeButton = new Button{rangeButtonPanel, "Find Next"};
+        mFindNextRangeButton->set_font_size(15);
+        mFindNextRangeButton->set_tooltip("Find the next pixel with value in the specified range");
+        mFindNextRangeButton->set_enabled(false);
+
+        // Store found pixels for "Find Next" functionality
+        mFoundPixels.clear();
+        mCurrentFoundPixelIdx = -1;
+
+        mFindRangeButton->set_callback([this, updateStatusText]() {
+            if (!mCurrentImage) return;
+
+            try {
+                float minVal = std::stof(mRangeMinTextBox->value());
+                float maxVal = std::stof(mRangeMaxTextBox->value());
+
+                // Swap if min > max
+                if (minVal > maxVal) std::swap(minVal, maxVal);
+
+                // Get current channel group
+                auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+                if (channels.empty()) return;
+
+                auto size = mCurrentImage->size();
+                mFoundPixels.clear();
+
+                // Find all pixels in the given range
+                for (const auto& channelName : channels) {
+                    const auto* channel = mCurrentImage->channel(channelName);
+                    if (!channel) continue;
+
+                    for (int y = 0; y < size.y(); ++y) {
+                        for (int x = 0; x < size.x(); ++x) {
+                            float val = channel->eval({x, y});
+                            if (val >= minVal && val <= maxVal) {
+                                mFoundPixels.push_back({{x, y}, val});
+                            }
+                        }
+                    }
+                }
+
+                // Sort found pixels by value
+                std::sort(mFoundPixels.begin(), mFoundPixels.end(),
+                    [](const auto& a, const auto& b) { return a.second < b.second; });
+
+                if (!mFoundPixels.empty()) {
+                    mCurrentFoundPixelIdx = 0;
+                    mFindNextRangeButton->set_enabled(true);
+
+                    // Focus on the first found pixel
+                    focusPixel(mFoundPixels[0].first);
+                    updateStatusText(
+                        mFoundPixels[0].first,
+                        mFoundPixels[0].second,
+                        "Range",
+                        fmt::format("{} of {}", 1, mFoundPixels.size())
+                    );
+                } else {
+                    mFindNextRangeButton->set_enabled(false);
+                    mStatusLabel->set_caption("No pixels found in the specified range");
+                }
+            } catch (const std::exception& e) {
+                mStatusLabel->set_caption(fmt::format("Error: {}", e.what()));
+            }
+        });
+
+        mFindNextRangeButton->set_callback([this, updateStatusText]() {
+            if (mFoundPixels.empty() || mCurrentFoundPixelIdx < 0) return;
+
+            mCurrentFoundPixelIdx = (mCurrentFoundPixelIdx + 1) % mFoundPixels.size();
+            focusPixel(mFoundPixels[mCurrentFoundPixelIdx].first);
+            updateStatusText(
+                mFoundPixels[mCurrentFoundPixelIdx].first,
+                mFoundPixels[mCurrentFoundPixelIdx].second,
+                "Range",
+                fmt::format("{} of {}", mCurrentFoundPixelIdx + 1, mFoundPixels.size())
+            );
+        });
+
+        // Status label to show results - reduced height
+        mStatusLabel = new Label{panel, "", "sans", 15};
+        mStatusLabel->set_font_size(15);
+        mStatusLabel->set_fixed_height(10);
+
+        // Add a tooltip to the entire section
+        panel->set_tooltip("Find pixels of interest in the image");
     }
 
     // Image selection
@@ -2951,5 +3200,23 @@ template <typename T> std::vector<T> ImageViewer::resizeImageArray(const std::ve
     }
 
     return out;
+}
+
+void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
+    if (!mCurrentImage) return;
+
+    Vector2i imageSize = mCurrentImage->size();
+    Vector2i center = imageSize / 2;
+    Vector2f offset = center - pixelPos;
+    offset -= Vector2f(0.5f);
+
+    // Scale the transform to maintain the current zoom level
+    float currentScale = mImageCanvas->scale();
+
+    Matrix3f newTransform;
+    newTransform = Matrix3f::scale(Vector2f{currentScale});
+    newTransform = Matrix3f::translate(offset / pixel_ratio() * currentScale) * newTransform;
+
+    mImageCanvas->setTransform(newTransform);
 }
 } // namespace tev

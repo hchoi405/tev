@@ -96,6 +96,8 @@ public:
 
     void fitImageToScreen(const Image& image);
     void resetTransform();
+    nanogui::Matrix3f getTransform() const { return mTransform; }
+    void setTransform(const nanogui::Matrix3f& transform) { mTransform = transform; }
 
     bool clipToLdr() const { return mClipToLdr; }
     void setClipToLdr(bool value) { mClipToLdr = value; }
