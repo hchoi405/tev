@@ -275,23 +275,27 @@ ImageViewer::ImageViewer(
         );
     }
 
+    auto toggleChildrenVisibilityExceptFirst = [](Widget* parentPanel) {
+        // Hide all children except the first one (which is the header panel)
+        for (auto& child : parentPanel->children()) {
+            if (child != parentPanel->children().front()) {
+                child->set_visible(!child->visible());
+            }
+        }
+    };
+
     // Helper for creating a show/hide button for panels
-    auto createShowHideButton = [this](Widget* parentPanel, const string& tooltip) -> Button* {
+    auto createShowHideButton = [this, toggleChildrenVisibilityExceptFirst](Widget* parentPanel, const string& tooltip) -> Button* {
         // Assume the first child is the header panel
         auto headerPanel = parentPanel->children().front();
 
         auto button = new Button{headerPanel, "", FA_EYE};
         button->set_font_size(15);
         button->set_flags(Button::ToggleButton);
-        button->set_pushed(true);
+        button->set_pushed(false);
         button->set_tooltip(tooltip);
-        button->set_change_callback([this, parentPanel](bool value) {
-            // Hide all children except the first one (which is the header panel)
-            for (auto& child : parentPanel->children()) {
-                if (child != parentPanel->children().front()) {
-                    child->set_visible(value);
-                }
-            }
+        button->set_change_callback([this, parentPanel, toggleChildrenVisibilityExceptFirst](bool value) {
+            toggleChildrenVisibilityExceptFirst(parentPanel);
             updateLayout();
         });
         return button;
@@ -387,6 +391,8 @@ ImageViewer::ImageViewer(
         mCopyResizeYTextBox->set_value("1");
         mCopyResizeYTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
         mCopyResizeYTextBox->set_font_size(15);
+
+        toggleChildrenVisibilityExceptFirst(panel);
     }
 
     // Crop box
@@ -567,7 +573,6 @@ ImageViewer::ImageViewer(
 
                 // Update layout to reflect changes
                 updateLayout();
-                perform_layout();
             }
             return true;
         });
@@ -634,7 +639,6 @@ ImageViewer::ImageViewer(
 
                     // Update layout
                     updateLayout();
-                    perform_layout();
                 }
                 // If fileDialog is empty, the user canceled the dialog, so we do nothing
             } catch (const std::exception& e) {
@@ -675,7 +679,6 @@ ImageViewer::ImageViewer(
                 addCropButtonCallback(minX, minY, maxX, maxY);
                 // Update the layout
                 updateLayout();
-                perform_layout();
                 // Update the crop list file
                 std::fstream cropListFile(mCropListFilename, std::ios::app);
                 cropListFile << minX << " " << minY << " " << maxX << " " << maxY << std::endl;
@@ -714,7 +717,6 @@ ImageViewer::ImageViewer(
 
             // Update the layout
             updateLayout();
-            perform_layout();
             // Clear the file and write the remaining lines
             std::fstream cropListFile(mCropListFilename, std::ios::out);
             for (auto& child : cropListScrollContent->children()) {
@@ -729,6 +731,8 @@ ImageViewer::ImageViewer(
             }
             cropListFile.close();
         });
+
+        toggleChildrenVisibilityExceptFirst(panel);
     }
 
     // Pixel locator
@@ -765,6 +769,10 @@ ImageViewer::ImageViewer(
             }
 
             mStatusLabel->set_caption(statusText);
+            auto preferred_size = mStatusLabel->preferred_size(m_nvg_context);
+            mStatusLabel->set_fixed_width(preferred_size.x());
+            mStatusLabel->set_fixed_height(max(20, preferred_size.y()));
+            updateLayout();
         };
 
         // Create buttons for different search criteria in a horizontal layout
@@ -952,10 +960,11 @@ ImageViewer::ImageViewer(
         // Status label to show results - reduced height
         mStatusLabel = new Label{panel, "", "sans", 15};
         mStatusLabel->set_font_size(15);
-        mStatusLabel->set_fixed_height(10);
 
         // Add a tooltip to the entire section
         panel->set_tooltip("Find pixels of interest in the image");
+
+        toggleChildrenVisibilityExceptFirst(panel);
     }
 
     // Image selection
