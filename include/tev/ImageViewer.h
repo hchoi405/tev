@@ -228,11 +228,12 @@ private:
     nanogui::Widget* mTonemapButtonContainer;
     nanogui::Widget* mMetricButtonContainer;
 
+    // Crop
+    nanogui::Button* mCropShowHideButton;
     nanogui::TextBox* mCropXminTextBox;
     nanogui::TextBox* mCropYminTextBox;
     nanogui::TextBox* mCropXmaxTextBox;
     nanogui::TextBox* mCropYmaxTextBox;
-
     std::string mCropListFilename = "cropList.txt";
     nanogui::TextBox* mCropListPathTextBox = nullptr;
     std::fstream mCropListFile;
@@ -299,6 +300,7 @@ private:
     nanogui::Button* mClipToLdrButton;
 
     // Clipboard size modifier
+    nanogui::Button* mCopyResizeShowHideButton;
     nanogui::TextBox* mCopyResizeXTextBox;
     nanogui::TextBox* mCopyResizeYTextBox;
     enum class EClipResizeMode {
