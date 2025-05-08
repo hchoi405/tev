@@ -1847,11 +1847,13 @@ void ImageViewer::draw_contents() {
                 "{}\n\n"
                 "Minimum: {:.6f}\n"
                 "Mean: {:.6f}\n"
-                "Maximum: {:.6f}",
+                "Maximum: {:.6f}\n"
+                "Variance: {:.6f}",
                 histogramTooltipBase,
                 statistics->minimum,
                 statistics->mean,
-                statistics->maximum)
+                statistics->maximum,
+                statistics->variance)
             );
         }
     } else {
