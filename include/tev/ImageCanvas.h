@@ -33,6 +33,7 @@ namespace tev {
 
 struct CanvasStatistics {
     float mean;
+    float variance;
     float maximum;
     float minimum;
     std::vector<float> histogram;

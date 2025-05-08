@@ -951,6 +951,7 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     size_t nChannels = result->nChannels = (int)(alphaChannel ? (flattened.size() - 1) : flattened.size());
     result->histogramColors.resize(nChannels);
 
+    // calculate mean, maximum, and minimum
     for (size_t i = 0; i < nChannels; ++i) {
         string rgba[] = {"R", "G", "B", "A"};
         string colorName = nChannels == 1 ? "L" : rgba[std::min(i, (size_t)3)];
@@ -976,6 +977,26 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     result->mean = totalNumPixels > 0 ? (float)(mean / totalNumPixels) : 0;
     result->maximum = maximum;
     result->minimum = minimum;
+
+    // calculate variance using the computed mean
+    double varianceSum = 0;
+    for (size_t i = 0; i < nChannels; ++i) {
+        const auto& channel = flattened[i];
+        for (int y = region.min.y(); y < region.max.y(); ++y) {
+            for (int x = region.min.x(); x < region.max.x(); ++x) {
+                auto v = channel.at({x, y});
+                if (!isfinite(v)) {
+                    continue;
+                }
+
+                double diff = v - result->mean;
+                varianceSum += diff * diff;
+            }
+        }
+    }
+
+    // Sample variance
+    result->variance = totalNumPixels > 1 ? (float)(varianceSum / (totalNumPixels - 1)) : 0;
 
     // Now that we know the maximum and minimum value we can define our histogram bin size.
     static const size_t NUM_BINS = 400;
