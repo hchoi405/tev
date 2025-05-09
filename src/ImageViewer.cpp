@@ -91,6 +91,17 @@ ImageViewer::ImageViewer(
 
     m_background = Color{0.23f, 1.0f};
 
+    // Initialize crop list file path to user's home directory for cross-platform compatibility
+    try {
+        auto homeDir = fs::path(getenv("HOME") ? getenv("HOME") :
+                            getenv("USERPROFILE") ? getenv("USERPROFILE") : ".");
+        mCropListFilename = (homeDir / "cropList.txt").string();
+    } catch (const std::exception& e) {
+        std::cerr << "Error setting home directory for crop list: " << e.what() << std::endl;
+        // Fall back to current directory if there's an error
+        mCropListFilename = "cropList.txt";
+    }
+
     mVerticalScreenSplit = new Widget{this};
     mVerticalScreenSplit->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill});
 
