@@ -237,10 +237,16 @@ private:
     nanogui::TextBox* mCropYminTextBox;
     nanogui::TextBox* mCropXmaxTextBox;
     nanogui::TextBox* mCropYmaxTextBox;
+    nanogui::TextBox* mCropWidthTextBox;
+    nanogui::TextBox* mCropHeightTextBox;
     std::string mCropListFilename = "cropList.txt";
     nanogui::TextBox* mCropListPathTextBox = nullptr;
     std::fstream mCropListFile;
     nanogui::VScrollPanel* mCropListContainer;
+
+    // Flags to prevent update loops between the two sets of text boxes
+    bool mUpdatingFromMinMax = false;
+    bool mUpdatingFromSizeFields = false;
 
     std::shared_ptr<BackgroundImagesLoader> mImagesLoader;
     std::shared_ptr<Ipc> mIpc;

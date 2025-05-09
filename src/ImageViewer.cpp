@@ -459,6 +459,44 @@ ImageViewer::ImageViewer(
                 // Update the crop box with the new values
                 mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
 
+                // Update the width/height text boxes without triggering their callbacks
+                if (!mUpdatingFromSizeFields) {
+                    mUpdatingFromMinMax = true;
+                    mCropWidthTextBox->set_value(std::to_string(maxX - minX));
+                    mCropHeightTextBox->set_value(std::to_string(maxY - minY));
+                    mUpdatingFromMinMax = false;
+                }
+
+                return true; // Callback successfully handled the change
+            } catch (const std::exception& e) {
+                std::cerr << "Invalid input: " << e.what() << std::endl;
+                return false; // Return false to indicate failure
+            }
+        };
+
+        // Alternative callback for width/height text boxes
+        auto updateCropFromSize = [this]() -> bool {
+            try {
+                if (mUpdatingFromMinMax) {
+                    return true; // Avoid recursive updates
+                }
+
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int width = std::stoi(this->mCropWidthTextBox->value());
+                int height = std::stoi(this->mCropHeightTextBox->value());
+
+                // Update the crop box with the new values
+                mUpdatingFromSizeFields = true;
+                
+                // Update max text boxes
+                mCropXmaxTextBox->set_value(std::to_string(minX + width));
+                mCropYmaxTextBox->set_value(std::to_string(minY + height));
+                
+                // Update the crop box
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(minX + width, minY + height)));
+                
+                mUpdatingFromSizeFields = false;
                 return true; // Callback successfully handled the change
             } catch (const std::exception& e) {
                 std::cerr << "Invalid input: " << e.what() << std::endl;
@@ -471,6 +509,34 @@ ImageViewer::ImageViewer(
         mCropYminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
         mCropXmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
         mCropYmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+
+        // Add width/height text boxes in a compact layout
+        auto dimensionsPanel = new Widget{panel};
+        dimensionsPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 4, 1});
+
+        // Width text box
+        auto widthPanel = new Widget{dimensionsPanel};
+        widthPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5});
+        new Label{widthPanel, "Width", "sans", 15};
+        mCropWidthTextBox = new TextBox{widthPanel};
+        mCropWidthTextBox->set_editable(true);
+        mCropWidthTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() - mCurrCrop->min.x() : 0));
+        mCropWidthTextBox->set_font_size(15);
+        mCropWidthTextBox->set_fixed_width(55);
+
+        // Height text box
+        auto heightPanel = new Widget{dimensionsPanel};
+        heightPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5});
+        new Label{heightPanel, "Height", "sans", 15};
+        mCropHeightTextBox = new TextBox{heightPanel};
+        mCropHeightTextBox->set_editable(true);
+        mCropHeightTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() - mCurrCrop->min.y() : 0));
+        mCropHeightTextBox->set_font_size(15);
+        mCropHeightTextBox->set_fixed_width(55);
+
+        // Set callbacks for width/height text boxes
+        mCropWidthTextBox->set_callback([updateCropFromSize](const std::string&) { return updateCropFromSize(); });
+        mCropHeightTextBox->set_callback([updateCropFromSize](const std::string&) { return updateCropFromSize(); });
 
         // Create a panel for the crop list file path
         auto cropFilePathPanel = new Widget{panel};
@@ -2971,6 +3037,9 @@ void ImageViewer::updateLayout() {
     mCropYminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.y() : 0));
     mCropXmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() : 0));
     mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
+
+    mCropWidthTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() - mCurrCrop->min.x() : 0));
+    mCropHeightTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() - mCurrCrop->min.y() : 0));
 
     mVerticalScreenSplit->set_fixed_size(m_size);
     mImageScrollContainer->set_fixed_height(m_size.y() - mImageScrollContainer->position().y() - footerHeight);
