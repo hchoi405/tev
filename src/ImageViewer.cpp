@@ -22,6 +22,7 @@
 #include <tev/imageio/ImageLoader.h>
 #include <tev/imageio/ImageSaver.h>
 #include <tev/imageio/StbiLdrImageSaver.h>
+#include <tev/CropButton.h>
 
 #include <clip.h>
 
@@ -448,13 +449,34 @@ ImageViewer::ImageViewer(
         mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
         mCropYmaxTextBox->set_font_size(15);
 
+        // Helper function to validate crop dimensions
+        auto validateCrop = [](int minX, int minY, int maxX, int maxY) -> std::optional<std::string> {
+            // Check if min coordinates are greater than or equal to max coordinates
+            if (minX >= maxX) {
+                return "Min X " + std::to_string(minX) + " must be less than Max X " + std::to_string(maxX);
+            }
+            if (minY >= maxY) {
+                return "Min Y " + std::to_string(minY) + " must be less than Max Y " + std::to_string(maxY);
+            }
+
+            // All validations passed
+            return std::nullopt;
+        };
+
         // Callback for when the user modifies any of the text boxes
-        auto updateCrop = [this]() -> bool {
+        auto updateCrop = [this, validateCrop]() -> bool {
             try {
                 int minX = std::stoi(this->mCropXminTextBox->value());
                 int minY = std::stoi(this->mCropYminTextBox->value());
                 int maxX = std::stoi(this->mCropXmaxTextBox->value());
                 int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                // Validate crop dimensions
+                auto validationError = validateCrop(minX, minY, maxX, maxY);
+                if (validationError) {
+                    std::cerr << "Invalid crop: " << *validationError << std::endl;
+                    return false;
+                }
 
                 // Update the crop box with the new values
                 mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
@@ -475,7 +497,7 @@ ImageViewer::ImageViewer(
         };
 
         // Alternative callback for width/height text boxes
-        auto updateCropFromSize = [this]() -> bool {
+        auto updateCropFromSize = [this, validateCrop]() -> bool {
             try {
                 if (mUpdatingFromMinMax) {
                     return true; // Avoid recursive updates
@@ -486,16 +508,23 @@ ImageViewer::ImageViewer(
                 int width = std::stoi(this->mCropWidthTextBox->value());
                 int height = std::stoi(this->mCropHeightTextBox->value());
 
+                // Validate crop dimensions using the calculated max values
+                auto validationError = validateCrop(minX, minY, minX + width, minY + height);
+                if (validationError) {
+                    std::cerr << "Invalid crop: " << *validationError << std::endl;
+                    return false;
+                }
+
                 // Update the crop box with the new values
                 mUpdatingFromSizeFields = true;
-                
+
                 // Update max text boxes
                 mCropXmaxTextBox->set_value(std::to_string(minX + width));
                 mCropYmaxTextBox->set_value(std::to_string(minY + height));
-                
+
                 // Update the crop box
                 mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(minX + width, minY + height)));
-                
+
                 mUpdatingFromSizeFields = false;
                 return true; // Callback successfully handled the change
             } catch (const std::exception& e) {
@@ -553,6 +582,16 @@ ImageViewer::ImageViewer(
         // Create the text box to display and edit the crop list file path directly in the panel
         mCropListPathTextBox = new TextBox{cropFilePathPanel};
         mCropListPathTextBox->set_editable(true);
+
+        // Convert initial relative path to absolute path if needed
+        try {
+            if (!mCropListFilename.empty() && !fs::path(mCropListFilename).is_absolute()) {
+                mCropListFilename = fs::absolute(mCropListFilename).string();
+            }
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Error converting initial path to absolute: " << e.what() << std::endl;
+        }
+
         mCropListPathTextBox->set_value(mCropListFilename);
         mCropListPathTextBox->set_font_size(15);
         mCropListPathTextBox->set_tooltip("Path to the crop list file");
@@ -563,11 +602,10 @@ ImageViewer::ImageViewer(
         cropWindowPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2, 1});
 
         auto cropButtonPanel = new Widget{cropWindowPanel};
-        cropButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill});
+        cropButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 1, Alignment::Fill});
         auto cropButtonAdd = new Button{cropButtonPanel, "Add", FA_PLUS};
-        auto cropButtonRemove = new Button{cropButtonPanel, "Remove", FA_MINUS};
         cropButtonAdd->set_font_size(15);
-        cropButtonRemove->set_font_size(15);
+        cropButtonAdd->set_tooltip("Add current crop to the list");
 
         mCropListContainer = new VScrollPanel{cropWindowPanel};
         mCropListContainer->set_fixed_width(mSidebarLayout->fixed_width());
@@ -581,23 +619,117 @@ ImageViewer::ImageViewer(
             mCropListFile = std::fstream(mCropListFilename, std::ios::out);
         }
 
-        auto addCropButtonCallback = [this, cropListScrollContent](int x1, int y1, int x2, int y2) {
+        auto addCropButtonCallback = [this, cropListScrollContent, validateCrop](int x1, int y1, int x2, int y2) {
+            auto valid_out = validateCrop(x1, y1, x2, y2);
+            if (valid_out) {
+                std::cerr << "Invalid crop: " << *valid_out << std::endl;
+                return;
+            }
+
             auto cropWindow = new Box2i(Vector2i(x1, y1), Vector2i(x2, y2));
-            auto button = new Button{
-                cropListScrollContent,
-                fmt::format("({}, {}) - ({}, {}) (w:{}, h:{})", x1, y1, x2, y2, x2 - x1, y2 - y1),
-            };
-            button->set_font_size(15);
+
+            // Create a container widget with horizontal layout for the crop button and delete button
+            auto buttonContainer = new Widget{cropListScrollContent};
+            buttonContainer->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 0, 2});
+
+            // Create a shortened caption that fits within the available space
+            std::string fullCaption = fmt::format("({}, {}) - ({}, {}) (w:{}, h:{})",
+                x1, y1, x2, y2, x2 - x1, y2 - y1);
+
+            // Create the crop button with shortened text if needed
+            auto button = new Button{buttonContainer, fullCaption};
+            button->set_font_size(12);
+            button->set_tooltip(fullCaption); // Show full coordinates in tooltip
+
             button->set_callback([this, cropWindow]() {
                 mImageCanvas->setCrop(*cropWindow);
                 mCurrCrop = *cropWindow;
+
+                // Update the text boxes with the new crop values
+                mCropXminTextBox->set_value(std::to_string(cropWindow->min.x()));
+                mCropYminTextBox->set_value(std::to_string(cropWindow->min.y()));
+                mCropXmaxTextBox->set_value(std::to_string(cropWindow->max.x()));
+                mCropYmaxTextBox->set_value(std::to_string(cropWindow->max.y()));
+                mCropWidthTextBox->set_value(std::to_string(cropWindow->max.x() - cropWindow->min.x()));
+                mCropHeightTextBox->set_value(std::to_string(cropWindow->max.y() - cropWindow->min.y()));
+            });
+
+            // Create the delete button
+            auto deleteButton = new Button{buttonContainer, "", FA_TIMES};
+            deleteButton->set_font_size(15);
+            deleteButton->set_tooltip("Delete this crop");
+            deleteButton->set_fixed_width(25);
+
+            // Add callback to delete button
+            deleteButton->set_callback([this, cropListScrollContent, buttonContainer, x1, y1, x2, y2]() {
+                // First collect information about all OTHER crops before removing this one
+                std::vector<std::tuple<int, int, int, int>> remainingCrops;
+
+                // Store all crops except for this one
+                for (auto& child : cropListScrollContent->children()) {
+                    // Skip the container being removed
+                    if (child == buttonContainer)
+                        continue;
+
+                    auto* cropButtonContainer = dynamic_cast<Widget*>(child);
+                    if (!cropButtonContainer || cropButtonContainer->child_count() < 1)
+                        continue;
+
+                    // Access the crop button which is the first child in the container
+                    auto* cropButton = dynamic_cast<Button*>(cropButtonContainer->child_at(0));
+                    if (!cropButton)
+                        continue;
+
+                    int cx1, cy1, cx2, cy2;
+                    // Try to parse coordinates from the tooltip which contains the full coordinates
+                    if (sscanf(cropButton->tooltip().c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                        remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
+                    }
+                    else if (sscanf(cropButton->caption().c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                        // Fallback to parsing from caption
+                        remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
+                    }
+                }
+
+                // Remove this crop container from UI
+                cropListScrollContent->remove_child(buttonContainer);
+
+                // Rewrite the file with remaining crops
+                if (mCropListFile.is_open()) {
+                    mCropListFile.close();
+                }
+
+                // Reopen file for writing (clearing it)
+                mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+
+                // Write all remaining crops
+                for (const auto& [cx1, cy1, cx2, cy2] : remainingCrops) {
+                    mCropListFile << cx1 << " " << cy1 << " " << cx2 << " " << cy2 << std::endl;
+                }
+
+                // Update layout
+                updateLayout();
             });
         };
 
         // Setup callbacks for the file path text box and browse button
         mCropListPathTextBox->set_callback([this, cropListScrollContent, addCropButtonCallback](const std::string& newPath) -> bool {
-            if (newPath != mCropListFilename) {
-                mCropListFilename = newPath;
+            // Convert relative path to absolute path if needed
+            std::string absolutePath = newPath;
+            if (!newPath.empty() && !fs::path(newPath).is_absolute()) {
+                try {
+                    absolutePath = fs::absolute(newPath).string();
+                } catch (const fs::filesystem_error& e) {
+                    std::cerr << "Error converting to absolute path: " << e.what() << std::endl;
+                    return false;
+                }
+            }
+
+            if (absolutePath != mCropListFilename) {
+                mCropListFilename = absolutePath;
+                // Update the textbox to show the absolute path
+                mCropListPathTextBox->set_value(absolutePath);
+
                 // Close current file if open
                 if (mCropListFile.is_open()) {
                     mCropListFile.close();
@@ -609,7 +741,7 @@ ImageViewer::ImageViewer(
                 }
 
                 // Check if the file exists and try to load crop entries
-                bool fileExists = fs::exists(toPath(newPath));
+                bool fileExists = fs::exists(toPath(absolutePath));
 
                 if (fileExists) {
                     // Attempt to open the existing file for reading and writing
@@ -726,16 +858,17 @@ ImageViewer::ImageViewer(
             addCropButtonCallback(x1, y1, x2, y2);
         }
 
-        // Bind callbacks to the add and remove buttons
-        cropButtonAdd->set_callback([this, addCropButtonCallback]() {
+        // Bind callbacks to the add button
+        cropButtonAdd->set_callback([this, addCropButtonCallback, validateCrop]() {
             try {
                 int minX = std::stoi(this->mCropXminTextBox->value());
                 int minY = std::stoi(this->mCropYminTextBox->value());
                 int maxX = std::stoi(this->mCropXmaxTextBox->value());
                 int maxY = std::stoi(this->mCropYmaxTextBox->value());
 
-                if (maxX - minX < CROP_MIN_SIZE || maxY - minY < CROP_MIN_SIZE) {
-                    std::cerr << "Crop window too small. Minimum size is " << CROP_MIN_SIZE << std::endl;
+                auto valid_out = validateCrop(minX, minY, maxX, maxY);
+                if (valid_out) {
+                    std::cerr << "Invalid crop: " << *valid_out << std::endl;
                     return;
                 }
 
@@ -750,52 +883,6 @@ ImageViewer::ImageViewer(
                 cropListFile << minX << " " << minY << " " << maxX << " " << maxY << std::endl;
                 mCropListContainer->set_scroll(1.f);
             } catch (const std::exception& e) { std::cerr << "Invalid input: " << e.what() << std::endl; }
-        });
-
-        cropButtonRemove->set_callback([this, cropListScrollContent]() {
-            if (cropListScrollContent->children().empty()) {
-                return;
-            }
-
-            auto parseButtonCaption = [](const std::string& caption) -> std::optional<Box2i> {
-                int x1, y1, x2, y2;
-                if (sscanf(caption.c_str(), "(%d, %d) - (%d, %d)", &x1, &y1, &x2, &y2) == 4) {
-                    return Box2i(Vector2i(x1, y1), Vector2i(x2, y2));
-                }
-                return std::nullopt;
-            };
-
-            // Remove first item of the list
-            auto firstChild = cropListScrollContent->children().front();
-            cropListScrollContent->remove_child(firstChild);
-            if (cropListScrollContent->children().size() > 0) {
-                auto secondChild = cropListScrollContent->children().front();
-                // Set the crop window of the second child
-                auto button = dynamic_cast<Button*>(secondChild);
-                if (button) {
-                    auto cropWindow = parseButtonCaption(button->caption());
-                    if (cropWindow) {
-                        mImageCanvas->setCrop(*cropWindow);
-                        mCurrCrop = *cropWindow;
-                    }
-                }
-            }
-
-            // Update the layout
-            updateLayout();
-            // Clear the file and write the remaining lines
-            std::fstream cropListFile(mCropListFilename, std::ios::out);
-            for (auto& child : cropListScrollContent->children()) {
-                auto button = dynamic_cast<Button*>(child);
-                if (button) {
-                    auto cropWindow = parseButtonCaption(button->caption());
-                    if (cropWindow) {
-                        cropListFile << cropWindow->min.x() << " " << cropWindow->min.y() << " " << cropWindow->max.x() << " "
-                                     << cropWindow->max.y() << std::endl;
-                    }
-                }
-            }
-            cropListFile.close();
         });
 
         toggleChildrenVisibilityExceptFirst(panel);
