@@ -179,6 +179,8 @@ public:
 
     void focusPixel(const nanogui::Vector2i& pixelPos);
 
+    void setSyncExposure(bool sync);
+
 private:
     void updateFilter();
     void updateLayout();
