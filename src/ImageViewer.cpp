@@ -3491,4 +3491,10 @@ void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
 
     mImageCanvas->setTransform(newTransform);
 }
+
+void ImageViewer::setSyncExposure(bool sync) {
+    if (mSyncExposure) {
+        mSyncExposure->set_checked(sync);
+    }
+}
 } // namespace tev
