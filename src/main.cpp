@@ -136,6 +136,26 @@ void handleIpcPacket(const IpcPacket& packet, const std::shared_ptr<BackgroundIm
             break;
         }
 
+        case IpcPacket::ExposureControl: {
+            while (!imageViewerIsReady) { }
+            float exposure = packet.interpretAsExposure();
+            sImageViewer->scheduleToUiThread([exposure] {
+                sImageViewer->setExposure(exposure);
+            });
+            sImageViewer->redraw();
+            break;
+        }
+
+        case IpcPacket::SyncExposureControl: {
+            while (!imageViewerIsReady) { }
+            bool sync = packet.interpretAsSyncExposure();
+            sImageViewer->scheduleToUiThread([sync] {
+                sImageViewer->setSyncExposure(sync);
+            });
+            sImageViewer->redraw();
+            break;
+        }
+
         default: {
             throw runtime_error{fmt::format("Invalid IPC packet type {}", (int)packet.type())};
         }

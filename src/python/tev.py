@@ -116,6 +116,8 @@ class IpcPacketType(IntEnum):
     CreateImage = 4
     UpdateImage = 6 # v3
     VectorGraphics = 8
+    ExposureControl = 9
+    SyncExposureControl = 10
 
 class Ipc:
     def __init__(self, hostname = "localhost", port = 14158):
@@ -294,6 +296,28 @@ class Ipc:
         data_bytes[0:4] = struct.pack("<I", len(data_bytes))
         self._socket.sendall(data_bytes)
         pass
+
+    def set_exposure(self, exposure: float):
+        if self._socket is None:
+            raise Exception("Communication was not started")
+
+        data_bytes = bytearray()
+        data_bytes.extend(struct.pack("<I", 0)) # reserved for length
+        data_bytes.extend(struct.pack("<b", IpcPacketType.ExposureControl))
+        data_bytes.extend(struct.pack("<f", exposure))
+        data_bytes[0:4] = struct.pack("<I", len(data_bytes))
+        self._socket.sendall(data_bytes)
+
+    def set_sync_exposure(self, sync: bool):
+        if self._socket is None:
+            raise Exception("Communication was not started")
+
+        data_bytes = bytearray()
+        data_bytes.extend(struct.pack("<I", 0)) # reserved for length
+        data_bytes.extend(struct.pack("<b", IpcPacketType.SyncExposureControl))
+        data_bytes.extend(struct.pack("<b", 1 if sync else 0))
+        data_bytes[0:4] = struct.pack("<I", len(data_bytes))
+        self._socket.sendall(data_bytes)
 
 # `Ipc` used to be called `TevIpc`, so we keep the alias for backwards compatibility.
 TevIpc = Ipc
