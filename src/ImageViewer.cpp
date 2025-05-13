@@ -28,6 +28,7 @@
 
 #include <nanogui/button.h>
 #include <nanogui/colorwheel.h>
+#include <nanogui/checkbox.h>
 #include <nanogui/icons.h>
 #include <nanogui/label.h>
 #include <nanogui/layout.h>
@@ -41,6 +42,7 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace nanogui;
 using namespace std;
@@ -49,6 +51,9 @@ namespace tev {
 
 static const int SIDEBAR_MIN_WIDTH = 230;
 static const float CROP_MIN_SIZE = 3;
+
+// Add member for per-image exposures
+std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
 
 ImageViewer::ImageViewer(
     const Vector2i& size, const shared_ptr<BackgroundImagesLoader>& imagesLoader, const shared_ptr<Ipc>& ipc, bool maximize, bool showUi, bool floatBuffer
@@ -148,6 +153,8 @@ ImageViewer::ImageViewer(
                 "Exposure scales the brightness of an image prior to tonemapping by 2^Exposure.\n\n"
                 "Keyboard shortcuts:\nE and Shift+E"
             );
+
+            addExposureResetAllButton(panel);
         }
 
         // Offset/Gamma label and slider
@@ -2391,6 +2398,12 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
     if (autoFitToScreen()) {
         mImageCanvas->fitImageToScreen(*mCurrentImage);
     }
+    // Set exposure for the selected image
+    float exposure = 0.0f;
+    if (mCurrentImage && mImageExposures.count(mCurrentImage)) {
+        exposure = mImageExposures[mCurrentImage];
+    }
+    setExposure(exposure);
 }
 
 void ImageViewer::selectGroup(string group) {
@@ -2484,10 +2497,65 @@ void ImageViewer::selectReference(const shared_ptr<Image>& image) {
 
 void ImageViewer::setExposure(float value) {
     value = round(value, 1.0f);
+    if (mSyncExposure && mSyncExposure->checked()) {
+        // Set exposure for all images
+        for (auto& pair : mImageExposures) {
+            pair.second = value;
+        }
+        // Also update the current image if not present in the map
+        if (mCurrentImage && !mImageExposures.count(mCurrentImage)) {
+            mImageExposures[mCurrentImage] = value;
+        }
+    } else if (mCurrentImage) {
+        mImageExposures[mCurrentImage] = value;
+    }
     mExposureSlider->set_value(value);
     mExposureLabel->set_caption(fmt::format("Exposure: {:+.1f}", value));
-
     mImageCanvas->setExposure(value);
+}
+
+void ImageViewer::addExposureResetAllButton(Widget* parent) {
+    // Add a horizontal panel for the checkbox and button
+    auto row = new Widget{parent};
+    row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+
+    // Checkbox for syncing exposure
+    auto syncCheckbox = new CheckBox{row, "Sync exposure"};
+    syncCheckbox->set_font_size(12);
+    syncCheckbox->set_checked(false);
+    syncCheckbox->set_tooltip("If checked, changing exposure will apply to all images.");
+
+    // Store the state in a member variable
+    mSyncExposure = syncCheckbox;
+
+    // Add callback for sync checkbox
+    syncCheckbox->set_callback([this](bool checked) {
+        if (checked && mCurrentImage) {
+            float exposure = 0.0f;
+            if (mImageExposures.count(mCurrentImage)) {
+                exposure = mImageExposures[mCurrentImage];
+            }
+            for (auto& pair : mImageExposures) {
+                pair.second = exposure;
+            }
+            // Also update the current image if not present in the map
+            if (!mImageExposures.count(mCurrentImage)) {
+                mImageExposures[mCurrentImage] = exposure;
+            }
+            setExposure(exposure);
+        }
+    });
+
+    // Button for resetting all exposures
+    auto button = new Button{row, "Reset Exposure (All Images)"};
+    button->set_font_size(12);
+    button->set_tooltip("Reset exposure for all images to 0");
+    button->set_callback([this] {
+        mImageExposures.clear();
+        if (mCurrentImage) {
+            setExposure(0.0f);
+        }
+    });
 }
 
 void ImageViewer::setOffset(float value) {

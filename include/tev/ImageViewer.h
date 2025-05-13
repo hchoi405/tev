@@ -33,11 +33,13 @@
 #include <nanogui/screen.h>
 #include <nanogui/slider.h>
 #include <nanogui/textbox.h>
+#include <nanogui/checkbox.h>
 
 #include <chrono>
 #include <memory>
 #include <set>
 #include <vector>
+#include <unordered_map>
 
 namespace tev {
 
@@ -336,6 +338,11 @@ private:
     nanogui::Label* mStatusLabel = nullptr;
     std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
     int mCurrentFoundPixelIdx = -1;
+
+    std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
+    void addExposureResetAllButton(nanogui::Widget* parent);
+
+    nanogui::CheckBox* mSyncExposure = nullptr;
 };
 
 } // namespace tev
