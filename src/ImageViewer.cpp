@@ -54,6 +54,8 @@ static const float CROP_MIN_SIZE = 3;
 
 // Add member for per-image exposures
 std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
+std::unordered_map<std::shared_ptr<Image>, float> mImageOffsets;
+std::unordered_map<std::shared_ptr<Image>, float> mImageGammas;
 
 ImageViewer::ImageViewer(
     const Vector2i& size, const shared_ptr<BackgroundImagesLoader>& imagesLoader, const shared_ptr<Ipc>& ipc, bool maximize, bool showUi, bool floatBuffer
@@ -137,6 +139,53 @@ ImageViewer::ImageViewer(
         new Label{panel, "Tonemapping", "sans-bold", 25};
         panel->set_tooltip("Various tonemapping options. Hover the individual controls to learn more!");
 
+        // Checkbox for syncing tonemapping values
+        auto row = new Widget{panel};
+        row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+        auto syncCheckbox = new CheckBox{row, "Sync"};
+        syncCheckbox->set_font_size(15);
+        syncCheckbox->set_checked(false);
+        syncCheckbox->set_tooltip("If checked, changing exposure will apply to all images.");
+
+        // Store the state in a member variable
+        mSyncTonemapping = syncCheckbox;
+
+        // Add callback for sync checkbox
+        syncCheckbox->set_callback([this](bool checked) {
+            if (checked && mCurrentImage) {
+                // When sync is enabled, propagate the current image's settings to all images
+                float exposure = 0.0f;
+                if (mImageExposures.count(mCurrentImage)) {
+                    exposure = mImageExposures[mCurrentImage];
+                }
+                setExposure(exposure);
+
+                float offset = 0.0f;
+                if (mImageOffsets.count(mCurrentImage)) {
+                    offset = mImageOffsets[mCurrentImage];
+                }
+                for (auto& pair : mImageOffsets) {
+                    pair.second = offset;
+                }
+                if (!mImageOffsets.count(mCurrentImage)) {
+                    mImageOffsets[mCurrentImage] = offset;
+                }
+                setOffset(offset);
+
+                float gamma = 2.2f;
+                if (mImageGammas.count(mCurrentImage)) {
+                    gamma = mImageGammas[mCurrentImage];
+                }
+                for (auto& pair : mImageGammas) {
+                    pair.second = gamma;
+                }
+                if (!mImageGammas.count(mCurrentImage)) {
+                    mImageGammas[mCurrentImage] = gamma;
+                }
+                setGamma(gamma);
+            }
+        });
+
         // Exposure label and slider
         {
             panel = new Widget{mSidebarLayout};
@@ -153,8 +202,6 @@ ImageViewer::ImageViewer(
                 "Exposure scales the brightness of an image prior to tonemapping by 2^Exposure.\n\n"
                 "Keyboard shortcuts:\nE and Shift+E"
             );
-
-            addExposureResetAllButton(panel);
         }
 
         // Offset/Gamma label and slider
@@ -2404,6 +2451,18 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
         exposure = mImageExposures[mCurrentImage];
     }
     setExposure(exposure);
+
+    float offset = 0.0f;
+    if (mCurrentImage && mImageOffsets.count(mCurrentImage)) {
+        offset = mImageOffsets[mCurrentImage];
+    }
+    setOffset(offset);
+
+    float gamma = 2.2f;
+    if (mCurrentImage && mImageGammas.count(mCurrentImage)) {
+        gamma = mImageGammas[mCurrentImage];
+    }
+    setGamma(gamma);
 }
 
 void ImageViewer::selectGroup(string group) {
@@ -2495,83 +2554,69 @@ void ImageViewer::selectReference(const shared_ptr<Image>& image) {
     }
 }
 
-void ImageViewer::setExposure(float value) {
-    value = round(value, 1.0f);
-    if (mSyncExposure && mSyncExposure->checked()) {
-        // Set exposure for all images
-        for (auto& pair : mImageExposures) {
-            pair.second = value;
+void ImageViewer::setTonemappingValue(ETonemapComponent component, float value) {
+    std::unordered_map<std::shared_ptr<Image>, float>* componentMap = nullptr;
+    std::function<void(float)> canvasSetter = nullptr;
+    nanogui::Slider* slider = nullptr;
+    nanogui::Label* label = nullptr;
+
+    switch (component) {
+        case ETonemapComponent::Exposure:
+            componentMap = &mImageExposures;
+            canvasSetter = [this](float val) { mImageCanvas->setExposure(val); };
+            slider = mExposureSlider;
+            label = mExposureLabel;
+            value = round(value, 1.0f);
+            if (slider) slider->set_value(value);
+            if (label) label->set_caption(fmt::format("Exposure: {:+.1f}", value));
+            break;
+        case ETonemapComponent::Offset:
+            componentMap = &mImageOffsets;
+            canvasSetter = [this](float val) { mImageCanvas->setOffset(val); };
+            slider = mOffsetSlider;
+            label = mOffsetLabel;
+            value = round(value, 2.0f);
+            if (slider) slider->set_value(value);
+            if (label) label->set_caption(fmt::format("Offset: {:+.2f}", value));
+            break;
+        case ETonemapComponent::Gamma:
+            componentMap = &mImageGammas;
+            canvasSetter = [this](float val) { mImageCanvas->setGamma(val); };
+            slider = mGammaSlider;
+            label = mGammaLabel;
+            value = round(value, 2.0f);
+            if (slider) slider->set_value(value);
+            if (label) label->set_caption(fmt::format("Gamma: {:+.2f}", value));
+            break;
+    }
+
+    if (mSyncTonemapping && mSyncTonemapping->checked()) {
+        // If syncing, update this specific component for ALL images.
+        for (const auto& img : mImages) { // Iterate through all loaded images
+            (*componentMap)[img] = value;
         }
-        // Also update the current image if not present in the map
-        if (mCurrentImage && !mImageExposures.count(mCurrentImage)) {
-            mImageExposures[mCurrentImage] = value;
+        // Ensure the current image's map entry is set, especially if mImages was empty or mCurrentImage wasn't in mImages.
+        if (mCurrentImage) {
+            (*componentMap)[mCurrentImage] = value;
         }
     } else if (mCurrentImage) {
-        mImageExposures[mCurrentImage] = value;
+        // If not syncing, only update the current image.
+        (*componentMap)[mCurrentImage] = value;
     }
-    mExposureSlider->set_value(value);
-    mExposureLabel->set_caption(fmt::format("Exposure: {:+.1f}", value));
-    mImageCanvas->setExposure(value);
+
+    if (canvasSetter) canvasSetter(value);
 }
 
-void ImageViewer::addExposureResetAllButton(Widget* parent) {
-    // Add a horizontal panel for the checkbox and button
-    auto row = new Widget{parent};
-    row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
-
-    // Checkbox for syncing exposure
-    auto syncCheckbox = new CheckBox{row, "Sync exposure"};
-    syncCheckbox->set_font_size(12);
-    syncCheckbox->set_checked(false);
-    syncCheckbox->set_tooltip("If checked, changing exposure will apply to all images.");
-
-    // Store the state in a member variable
-    mSyncExposure = syncCheckbox;
-
-    // Add callback for sync checkbox
-    syncCheckbox->set_callback([this](bool checked) {
-        if (checked && mCurrentImage) {
-            float exposure = 0.0f;
-            if (mImageExposures.count(mCurrentImage)) {
-                exposure = mImageExposures[mCurrentImage];
-            }
-            for (auto& pair : mImageExposures) {
-                pair.second = exposure;
-            }
-            // Also update the current image if not present in the map
-            if (!mImageExposures.count(mCurrentImage)) {
-                mImageExposures[mCurrentImage] = exposure;
-            }
-            setExposure(exposure);
-        }
-    });
-
-    // Button for resetting all exposures
-    auto button = new Button{row, "Reset Exposure (All Images)"};
-    button->set_font_size(12);
-    button->set_tooltip("Reset exposure for all images to 0");
-    button->set_callback([this] {
-        mImageExposures.clear();
-        if (mCurrentImage) {
-            setExposure(0.0f);
-        }
-    });
+void ImageViewer::setExposure(float value) {
+    setTonemappingValue(ETonemapComponent::Exposure, value);
 }
 
 void ImageViewer::setOffset(float value) {
-    value = round(value, 2.0f);
-    mOffsetSlider->set_value(value);
-    mOffsetLabel->set_caption(fmt::format("Offset: {:+.2f}", value));
-
-    mImageCanvas->setOffset(value);
+    setTonemappingValue(ETonemapComponent::Offset, value);
 }
 
 void ImageViewer::setGamma(float value) {
-    value = round(value, 2.0f);
-    mGammaSlider->set_value(value);
-    mGammaLabel->set_caption(fmt::format("Gamma: {:+.2f}", value));
-
-    mImageCanvas->setGamma(value);
+    setTonemappingValue(ETonemapComponent::Gamma, value);
 }
 
 void ImageViewer::normalizeExposureAndOffset() {
@@ -2596,6 +2641,12 @@ void ImageViewer::normalizeExposureAndOffset() {
 }
 
 void ImageViewer::resetImage() {
+    if (mSyncTonemapping->checked())
+    {
+        mImageExposures.clear();
+        mImageOffsets.clear();
+        mImageGammas.clear();
+    }
     setExposure(0);
     setOffset(0);
     setGamma(2.2f);
@@ -3493,8 +3544,8 @@ void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
 }
 
 void ImageViewer::setSyncExposure(bool sync) {
-    if (mSyncExposure) {
-        mSyncExposure->set_checked(sync);
+    if (mSyncTonemapping) {
+        mSyncTonemapping->set_checked(sync);
     }
 }
 } // namespace tev

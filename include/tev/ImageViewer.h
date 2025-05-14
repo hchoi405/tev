@@ -40,8 +40,15 @@
 #include <set>
 #include <vector>
 #include <unordered_map>
+#include <functional>
 
 namespace tev {
+
+enum class ETonemapComponent {
+    Exposure,
+    Offset,
+    Gamma
+};
 
 class ImageViewer : public nanogui::Screen {
 public:
@@ -341,10 +348,14 @@ private:
     std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
     int mCurrentFoundPixelIdx = -1;
 
+    // Tonemapping
     std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
-    void addExposureResetAllButton(nanogui::Widget* parent);
+    std::unordered_map<std::shared_ptr<Image>, float> mImageOffsets;
+    std::unordered_map<std::shared_ptr<Image>, float> mImageGammas;
 
-    nanogui::CheckBox* mSyncExposure = nullptr;
+    nanogui::CheckBox* mSyncTonemapping = nullptr;
+
+    void setTonemappingValue(ETonemapComponent component, float value);
 };
 
 } // namespace tev
