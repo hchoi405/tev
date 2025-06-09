@@ -132,7 +132,7 @@ ImageViewer::ImageViewer(
     mImageCanvas = new ImageCanvas{horizontalScreenSplit};
     mImageCanvas->setPixelRatio(pixel_ratio());
 
-    // Tonemapping sectionim
+    // Tonemapping section
     {
         auto panel = new Widget{mSidebarLayout};
         panel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
@@ -142,16 +142,13 @@ ImageViewer::ImageViewer(
         // Checkbox for syncing tonemapping values
         auto row = new Widget{panel};
         row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
-        auto syncCheckbox = new CheckBox{row, "Sync"};
-        syncCheckbox->set_font_size(15);
-        syncCheckbox->set_checked(false);
-        syncCheckbox->set_tooltip("If checked, changing exposure will apply to all images.");
-
-        // Store the state in a member variable
-        mSyncTonemapping = syncCheckbox;
+        mSyncTonemapping = new CheckBox{row, "Sync"};
+        mSyncTonemapping->set_font_size(15);
+        mSyncTonemapping->set_checked(true);
+        mSyncTonemapping->set_tooltip("If checked, changing exposure will apply to all images.");
 
         // Add callback for sync checkbox
-        syncCheckbox->set_callback([this](bool checked) {
+        mSyncTonemapping->set_callback([this](bool checked) {
             if (checked && mCurrentImage) {
                 // When sync is enabled, propagate the current image's settings to all images
                 float exposure = 0.0f;
