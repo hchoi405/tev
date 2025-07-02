@@ -1444,6 +1444,11 @@ bool ImageViewer::mouse_button_event(const nanogui::Vector2i& p, int button, boo
                 return true;
             } else if (mImageCanvas->contains(p) && mCurrentImage) {
                 mDragType = glfwGetKey(glfwWindow, GLFW_KEY_C) ? EMouseDragType::ImageCrop : EMouseDragType::ImageDrag;
+
+                if (mDragType == EMouseDragType::ImageCrop) {
+                    mImageCanvas->setCropDragging(true);
+                }
+
                 return true;
             }
         }
@@ -1451,6 +1456,8 @@ bool ImageViewer::mouse_button_event(const nanogui::Vector2i& p, int button, boo
         if (mDragType == EMouseDragType::ImageButtonDrag) {
             requestLayoutUpdate();
         } else if (mDragType == EMouseDragType::ImageCrop) {
+            mImageCanvas->setCropDragging(false);
+
             if (norm(mDraggingStartPosition - p) < CROP_MIN_SIZE) {
                 // If the user did not drag the mouse far enough, we assume that they wanted to reset the crop rather than create a new one.
                 mImageCanvas->setCrop(std::nullopt);
@@ -2175,6 +2182,9 @@ void ImageViewer::removeImage(shared_ptr<Image> image) {
         // If we're currently dragging the to-be-removed image, stop.
         if ((size_t)id == mDraggedImageButtonId) {
             requestLayoutUpdate();
+            if (mDragType == EMouseDragType::ImageCrop) {
+                mImageCanvas->setCropDragging(false);
+            }
             mDragType = EMouseDragType::None;
         } else if ((size_t)id < mDraggedImageButtonId) {
             --mDraggedImageButtonId;

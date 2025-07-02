@@ -792,6 +792,10 @@ shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
         return nullptr;
     }
 
+    if (mCropDragging) {
+        return nullptr;
+    }
+
     string channels = join(mImage->channelsInGroup(mRequestedChannelGroup), ",");
     string key = mReference ? fmt::format("{}-{}-{}-{}", mImage->id(), channels, mReference->id(), (int)mMetric) :
                               fmt::format("{}-{}", mImage->id(), channels);

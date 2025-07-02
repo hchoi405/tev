@@ -92,6 +92,9 @@ public:
     void setCrop(const std::optional<Box2i>& crop) { mCrop = crop; }
     Box2i cropInImageCoords() const;
 
+    void setCropDragging(bool dragging) { mCropDragging = dragging; }
+    bool isCropDragging() const { return mCropDragging; }
+
     auto backgroundColor() { return mShader->backgroundColor(); }
     void setBackgroundColor(const nanogui::Color& color) { mShader->setBackgroundColor(color); }
 
@@ -171,6 +174,7 @@ private:
     ETonemap mTonemap = SRGB;
     EMetric mMetric = Error;
     std::optional<Box2i> mCrop;
+    bool mCropDragging = false;
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mCanvasStatistics;
     std::map<int, std::vector<std::string>> mImageIdToCanvasStatisticsKey;
