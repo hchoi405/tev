@@ -1782,32 +1782,88 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
             //         }
             //     }
             // } else
+            // Try direct image format first
             if (clip::has(clip::image_format())) {
                 clip::image clipImage;
                 if (!clip::get_image(clipImage)) {
-                    tlog::error() << "Failed to paste image from clipboard.";
+                    tlog::error() << "Failed to get image from clipboard.";
                 } else {
-                    tlog::info() << "Loading image from clipboard...";
+                    const auto& spec = clipImage.spec();
+                    
                     stringstream imageStream;
-                    imageStream << "clip" << string(reinterpret_cast<const char*>(&clipImage.spec()), sizeof(clip::image_spec))
-                                << string(clipImage.data(), clipImage.spec().bytes_per_row * clipImage.spec().height);
+                    imageStream << "clip" << string(reinterpret_cast<const char*>(&spec), sizeof(clip::image_spec))
+                                << string(clipImage.data(), spec.bytes_per_row * spec.height);
 
-                    auto imagesLoadTask = tryLoadImage(
-                        fmt::format("clipboard ({})", ++mClipboardIndex),
-                        imageStream,
-                        "",
-                        mImagesLoader->applyGainmaps(),
-                        mImagesLoader->groupChannels()
-                    );
-                    const auto images = imagesLoadTask.get();
+                    try {
+                        auto imagesLoadTask = tryLoadImage(
+                            fmt::format("clipboard ({})", ++mClipboardIndex),
+                            imageStream,
+                            "",
+                            mImagesLoader->applyGainmaps(),
+                            mImagesLoader->groupChannels()
+                        );
+                        const auto images = imagesLoadTask.get();
 
-                    if (images.empty()) {
-                        tlog::error() << "Failed to load image from clipboard data.";
-                    } else {
-                        for (auto& image : images) {
-                            addImage(image, true);
+                        if (images.empty()) {
+                            tlog::error() << "Failed to load image from clipboard data.";
+                        } else {
+                            tlog::success() << fmt::format("Successfully loaded {} image(s) from clipboard.", images.size());
+                            for (auto& image : images) {
+                                addImage(image, true);
+                            }
                         }
+                    } catch (const std::exception& e) {
+                        tlog::error() << fmt::format("Exception while loading clipboard image: {}", e.what());
                     }
+                }
+            } else {
+                // Fallback: try to get image using clip::lock and manual format detection
+                bool manualClipboardSuccess = false;
+                try {
+                    clip::lock clipLock;
+                    if (clipLock.locked()) {
+                        clip::image clipImage;
+                        if (clipLock.get_image(clipImage)) {
+                            const auto& spec = clipImage.spec();
+                            
+                            stringstream imageStream;
+                            imageStream << "clip" << string(reinterpret_cast<const char*>(&spec), sizeof(clip::image_spec))
+                                        << string(clipImage.data(), spec.bytes_per_row * spec.height);
+
+                            try {
+                                auto imagesLoadTask = tryLoadImage(
+                                    fmt::format("clipboard ({})", ++mClipboardIndex),
+                                    imageStream,
+                                    "",
+                                    mImagesLoader->applyGainmaps(),
+                                    mImagesLoader->groupChannels()
+                                );
+                                const auto images = imagesLoadTask.get();
+
+                                if (images.empty()) {
+                                    tlog::error() << "Failed to load image from manual clipboard data.";
+                                } else {
+                                    tlog::success() << fmt::format("Successfully loaded {} image(s) from manual clipboard.", images.size());
+                                    for (auto& image : images) {
+                                        addImage(image, true);
+                                    }
+                                    manualClipboardSuccess = true;
+                                }
+                            } catch (const std::exception& e) {
+                                tlog::error() << fmt::format("Exception while loading manual clipboard image: {}", e.what());
+                            }
+                        } else {
+                            tlog::error() << "Failed to get image via manual clipboard lock.";
+                        }
+                    } else {
+                        tlog::error() << "Failed to lock clipboard for manual access.";
+                    }
+                } catch (const std::exception& e) {
+                    tlog::error() << fmt::format("Exception during manual clipboard access: {}", e.what());
+                }
+                
+                if (!manualClipboardSuccess) {
+                    tlog::error() << "Clipboard does not contain accessible image data.";
                 }
             }
 
