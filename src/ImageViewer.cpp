@@ -3451,17 +3451,21 @@ template <typename T> std::vector<T> ImageViewer::resizeImageArray(const std::ve
 void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
     if (!mCurrentImage) return;
 
-    Vector2i imageSize = mCurrentImage->size();
-    Vector2i center = imageSize / 2;
-    Vector2f offset = center - pixelPos;
-    offset -= Vector2f(0.5f);
+    // Compute offset so that the given pixel's center ends up at the canvas center.
+    Vector2f imageCenter = Vector2f{mCurrentImage->size()} * 0.5f;
+    Vector2f offset = imageCenter - Vector2f{pixelPos} - Vector2f{0.5f};
 
-    // Scale the transform to maintain the current zoom level
-    float currentScale = mImageCanvas->scale();
+    // Choose a target on-screen pixel size (in NanoGUI pixels) to "zoom in" to.
+    // Keep current zoom if already closer than desired.
+    const float targetPixelSize = 80.0f; // visible and comfortable for inspection
+    const float pr = mImageCanvas->pixelRatio();
+    const float desiredScale = targetPixelSize * pr;
+    const float currentScale = mImageCanvas->scale();
+    const float newScale = std::max(currentScale, desiredScale);
 
-    Matrix3f newTransform;
-    newTransform = Matrix3f::scale(Vector2f{currentScale});
-    newTransform = Matrix3f::translate(offset / pixel_ratio() * currentScale) * newTransform;
+    // Build transform: translate by the required offset at the new scale, then apply the new scale.
+    Matrix3f newTransform = Matrix3f::scale(Vector2f{newScale});
+    newTransform = Matrix3f::translate(offset / pr * newScale) * newTransform;
 
     mImageCanvas->setTransform(newTransform);
 }
