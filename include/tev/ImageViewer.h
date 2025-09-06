@@ -329,7 +329,7 @@ private:
     };
     EClipResizeMode mClipResizeMode = EClipResizeMode::Nearest;
     template <typename T>
-    std::vector<T> resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight);
+    std::vector<T> resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight) const;
 
     int mDidFitToImage = 0;
 

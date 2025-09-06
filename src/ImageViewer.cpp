@@ -1735,49 +1735,6 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                 try {
                     copyImageCanvasToClipboard();
                 } catch (const runtime_error& e) { showErrorDialog(fmt::format("Failed to copy image to clipboard: {}", e.what())); }
-            } else if (auto imageSize = mImageCanvas->imageDataSize(); imageSize.x() > 0 && imageSize.y() > 0) {
-                int resizedImageWidth = int(imageSize.x() * std::stof(mCopyResizeXTextBox->value()));
-                int resizedImageHeight = int(imageSize.y() * std::stof(mCopyResizeYTextBox->value()));
-
-                clip::image_spec imageMetadata;
-                imageMetadata.width = resizedImageWidth;
-                imageMetadata.height = resizedImageHeight;
-                imageMetadata.bits_per_pixel = 32;
-                imageMetadata.bytes_per_row = imageMetadata.bits_per_pixel / 8 * imageMetadata.width;
-
-                imageMetadata.red_mask = 0x000000ff;
-                imageMetadata.green_mask = 0x0000ff00;
-                imageMetadata.blue_mask = 0x00ff0000;
-                imageMetadata.alpha_mask = 0xff000000;
-                imageMetadata.red_shift = 0;
-                imageMetadata.green_shift = 8;
-                imageMetadata.blue_shift = 16;
-                imageMetadata.alpha_shift = 24;
-
-                auto resizeFunc = [this, &imageSize](const vector<float>& data) {
-                    return resizeImageArray(data, imageSize.x(), imageSize.y());
-                };
-
-                auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
-
-                // // Print image array
-                // for (int i = 0; i < imageSize.y(); i++) {
-                //     for (int j = 0; j < imageSize.x(); j++) {
-                //         printf("%f %f %f %f\n", floatData[4 * (i * imageSize.x() + j)], floatData[4 * (i * imageSize.x() + j) + 1],
-                //         floatData[4 * (i * imageSize.x() + j) + 2], floatData[4 * (i * imageSize.x() + j) + 3]);
-                //     }
-                //     std::cout << std::endl;
-                // }
-
-                // auto imageDataResized = resizeImageArray(imageData, imageSize.x(), imageSize.y());
-
-                clip::image image(imageDataResized.data(), imageMetadata);
-
-                if (clip::set_image(image)) {
-                    tlog::success() << "Image copied to clipboard.";
-                } else {
-                    tlog::error() << "Failed to copy image to clipboard.";
-                }
             }
 
             return true;
@@ -3009,10 +2966,18 @@ void ImageViewer::copyImageCanvasToClipboard() const {
         throw std::runtime_error{"Image canvas has no image data to copy to clipboard."};
     }
 
+    auto resizeFunc = [this, imageSize](std::vector<float>& data) {
+        return resizeImageArray<float>(data, imageSize.x(), imageSize.y());
+    };
+
+    int resizedImageWidth = int(imageSize.x() * std::stof(mCopyResizeXTextBox->value()));
+    int resizedImageHeight = int(imageSize.y() * std::stof(mCopyResizeYTextBox->value()));
+
 #if defined(__APPLE__) or defined(_WIN32)
+
     clip::image_spec imageMetadata;
-    imageMetadata.width = imageSize.x();
-    imageMetadata.height = imageSize.y();
+    imageMetadata.width = resizedImageWidth;
+    imageMetadata.height = resizedImageHeight;
     imageMetadata.bits_per_pixel = 32;
     imageMetadata.bytes_per_row = imageMetadata.bits_per_pixel / 8 * imageMetadata.width;
 
@@ -3025,19 +2990,20 @@ void ImageViewer::copyImageCanvasToClipboard() const {
     imageMetadata.blue_shift = 16;
     imageMetadata.alpha_shift = 24;
 
-    auto imageData = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max());
-    clip::image image(imageData.data(), imageMetadata);
+    auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
+    clip::image image(imageDataResized.data(), imageMetadata);
 
     if (!clip::set_image(image)) {
         throw std::runtime_error{"clip::set_image failed."};
     }
 #else
-    auto imageData = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max());
+
+    auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
     auto pngImageSaver = make_unique<StbiLdrImageSaver>();
 
     stringstream pngData;
     try {
-        pngImageSaver->save(pngData, "clipboard.png", imageData, imageSize, 4);
+        pngImageSaver->save(pngData, "clipboard.png", imageDataResized, Vector2i{resizedImageWidth, resizedImageHeight}, 4);
     } catch (const ImageSaveError& e) {
         throw std::runtime_error{fmt::format("Failed to save image data to clipboard as PNG: {}", e.what())};
     }
@@ -3448,7 +3414,7 @@ shared_ptr<Image> ImageViewer::imageByName(string_view imageName) {
     }
 }
 
-template <typename T> std::vector<T> ImageViewer::resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight) {
+template <typename T> std::vector<T> ImageViewer::resizeImageArray(const std::vector<T>& arr, const int inputWidth, const int inputHeight) const {
     float resizeX = std::stof(mCopyResizeXTextBox->value());
     float resizeY = std::stof(mCopyResizeYTextBox->value());
 
