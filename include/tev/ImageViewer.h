@@ -193,6 +193,20 @@ public:
 
 private:
     void updateFilter();
+
+    struct ChannelProcessContext {
+        std::vector<std::string> channelNames;
+        std::vector<const Channel*> channels;
+        std::vector<const Channel*> referenceChannels;
+        std::vector<bool> isAlpha;
+        nanogui::Vector2i size;
+        nanogui::Vector2i refOffset{0, 0};
+        int minX = 0, maxX = 0, minY = 0, maxY = 0;
+        bool hasReference = false;
+    };
+
+    bool buildChannelProcessContext(ChannelProcessContext& ctx) const;
+    void forEachChannelPixelValue(const ChannelProcessContext& ctx, const std::function<void(int ci, int x, int y, float val)>& fn) const;
     void updateLayout();
     void updateTitle();
     std::string groupName(size_t index);

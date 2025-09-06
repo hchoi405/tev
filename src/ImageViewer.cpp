@@ -1000,35 +1000,18 @@ ImageViewer::ImageViewer(
         findMaxButton->set_callback([this, updateStatusText]() {
             if (!mCurrentImage) return;
 
-            // Get current channel group
-            const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
-            if (channelImages.empty()) return;
-
-            auto size = mCurrentImage->size();
+            // Build processing context
+            ChannelProcessContext ctx;
+            if (!buildChannelProcessContext(ctx)) return;
             Vector2i maxPos{0, 0};
             float maxVal = -numeric_limits<float>::infinity();
-
-            const Box2i region = mImageCanvas->cropInImageCoords();
-            int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
-            if (region.isValid()) {
-                cropMinX = region.min.x();
-                cropMaxX = region.max.x();
-                cropMinY = region.min.y();
-                cropMaxY = region.max.y();
-            }
-
-            // Find maximum value across all channels in the current group, within crop region if set
-            for (const auto& channel : channelImages) {
-                for (int y = cropMinY; y < cropMaxY; ++y) {
-                    for (int x = cropMinX; x < cropMaxX; ++x) {
-                        float val = channel.eval({x, y});
-                        if (val > maxVal) {
-                            maxVal = val;
-                            maxPos = {x, y};
-                        }
-                    }
+            // Find maximum value across all channels in the current group, within crop region
+            forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                if (val > maxVal) {
+                    maxVal = val;
+                    maxPos = {x, y};
                 }
-            }
+            });
 
             // Focus on the found pixel
             focusPixel(maxPos);
@@ -1041,35 +1024,18 @@ ImageViewer::ImageViewer(
         findMinButton->set_callback([this, updateStatusText]() {
             if (!mCurrentImage) return;
 
-            // Get current channel group
-            const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
-            if (channelImages.empty()) return;
-
-            auto size = mCurrentImage->size();
+            // Build processing context
+            ChannelProcessContext ctx;
+            if (!buildChannelProcessContext(ctx)) return;
             Vector2i minPos{0, 0};
             float minVal = numeric_limits<float>::infinity();
-
-            const Box2i region = mImageCanvas->cropInImageCoords();
-            int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
-            if (region.isValid()) {
-                cropMinX = region.min.x();
-                cropMaxX = region.max.x();
-                cropMinY = region.min.y();
-                cropMaxY = region.max.y();
-            }
-
             // Find minimum value across all channels in the current group
-            for (const auto& channel : channelImages) {
-                for (int y = cropMinY; y < cropMaxY; ++y) {
-                    for (int x = cropMinX; x < cropMaxX; ++x) {
-                        float val = channel.eval({x, y});
-                        if (val < minVal) {
-                            minVal = val;
-                            minPos = {x, y};
-                        }
-                    }
+            forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                if (val < minVal) {
+                    minVal = val;
+                    minPos = {x, y};
                 }
-            }
+            });
 
             // Focus on the found pixel
             focusPixel(minPos);
@@ -1124,33 +1090,17 @@ ImageViewer::ImageViewer(
                 // Swap if min > max
                 if (minVal > maxVal) std::swap(minVal, maxVal);
 
-                // Get current channel group
-                const auto &channelImages = ImageCanvas::channelsFromImages(mCurrentImage, mCurrentReference, mCurrentGroup, mImageCanvas->metric(), 0); // 0 for lower priority
-                if (channelImages.empty()) return;
-
-                auto size = mCurrentImage->size();
+                // Build processing context
+                ChannelProcessContext ctx;
+                if (!buildChannelProcessContext(ctx)) return;
                 mFoundPixels.clear();
 
-                const Box2i region = mImageCanvas->cropInImageCoords();
-                int cropMinX = 0, cropMaxX = size.x(), cropMinY = 0, cropMaxY = size.y();
-                if (region.isValid()) {
-                    cropMinX = region.min.x();
-                    cropMaxX = region.max.x();
-                    cropMinY = region.min.y();
-                    cropMaxY = region.max.y();
-                }
-
                 // Find all pixels in the given range
-                for (const auto& channel : channelImages) {
-                    for (int y = cropMinY; y < cropMaxY; ++y) {
-                        for (int x = cropMinX; x < cropMaxX; ++x) {
-                            float val = channel.eval({x, y});
-                            if (val >= minVal && val <= maxVal) {
-                                mFoundPixels.push_back({{x, y}, val});
-                            }
-                        }
+                forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                    if (val >= minVal && val <= maxVal) {
+                        mFoundPixels.push_back({{x, y}, val});
                     }
-                }
+                });
 
                 // Sort found pixels by value
                 std::sort(mFoundPixels.begin(), mFoundPixels.end(),
@@ -1198,7 +1148,7 @@ ImageViewer::ImageViewer(
         panel->set_tooltip("Find pixels of interest in the image");
 
         toggleChildrenVisibilityExceptFirst(panel);
-    }
+}
 
     // Image selection
     {
@@ -3519,6 +3469,77 @@ void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
 void ImageViewer::setSyncExposure(bool sync) {
     if (mSyncTonemapping) {
         mSyncTonemapping->set_checked(sync);
+    }
+}
+
+bool ImageViewer::buildChannelProcessContext(ChannelProcessContext& ctx) const {
+    if (!mCurrentImage) {
+        return false;
+    }
+
+    ctx.channelNames = mCurrentImage->channelsInGroup(mCurrentGroup);
+    if (ctx.channelNames.empty()) {
+        return false;
+    }
+
+    ctx.channels = mCurrentImage->channels(ctx.channelNames);
+
+    ctx.hasReference = (bool)mCurrentReference;
+    if (ctx.hasReference) {
+        ctx.referenceChannels = mCurrentReference->channels(ctx.channelNames);
+        ctx.refOffset = (Vector2i{mCurrentReference->size().x(), mCurrentReference->size().y()} - mCurrentImage->size()) / 2;
+    } else {
+        ctx.refOffset = {0, 0};
+    }
+
+    ctx.isAlpha.resize(ctx.channelNames.size());
+    for (size_t i = 0; i < ctx.channelNames.size(); ++i) {
+        ctx.isAlpha[i] = Channel::isAlpha(ctx.channelNames[i]);
+    }
+
+    ctx.size = mCurrentImage->size();
+
+    const Box2i region = mImageCanvas->cropInImageCoords();
+    ctx.minX = 0; ctx.maxX = ctx.size.x();
+    ctx.minY = 0; ctx.maxY = ctx.size.y();
+    if (region.isValid()) {
+        ctx.minX = region.min.x();
+        ctx.maxX = region.max.x();
+        ctx.minY = region.min.y();
+        ctx.maxY = region.max.y();
+    }
+
+    return true;
+}
+
+void ImageViewer::forEachChannelPixelValue(
+    const ChannelProcessContext& ctx,
+    const std::function<void(int ci, int x, int y, float val)>& fn
+) const {
+    for (size_t ci = 0; ci < ctx.channels.size(); ++ci) {
+        const auto* channel = ctx.channels[ci];
+        const auto* refChan = (ctx.hasReference && ci < ctx.referenceChannels.size()) ? ctx.referenceChannels[ci] : nullptr;
+
+        for (int y = ctx.minY; y < ctx.maxY; ++y) {
+            for (int x = ctx.minX; x < ctx.maxX; ++x) {
+                float val;
+                if (ctx.hasReference) {
+                    if (ctx.isAlpha[ci]) {
+                        val = 0.5f * (channel->eval({x, y}) + (refChan ? refChan->eval({x + ctx.refOffset.x(), y + ctx.refOffset.y()}) : 1.0f));
+                    } else {
+                        val = ImageCanvas::applyMetric(
+                            channel->eval({x, y}),
+                            refChan ? refChan->eval({x + ctx.refOffset.x(), y + ctx.refOffset.y()}) : 0.0f,
+                            mImageCanvas->metric()
+                        );
+                    }
+                } else {
+                    val = channel->eval({x, y});
+                }
+
+                fn((int)ci, x, y, val);
+            }
+        }
     }
 }
 } // namespace tev
