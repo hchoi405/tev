@@ -1,5 +1,6 @@
 # Build artifacts
 /build
+/build_debug
 /x64
 _CPack_Packages
 
