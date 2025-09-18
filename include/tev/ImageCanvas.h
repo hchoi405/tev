@@ -37,9 +37,11 @@ struct CanvasStatistics {
     float maximum;
     float minimum;
     std::vector<float> histogram;
+    std::vector<float> histogramLinear;
     std::vector<nanogui::Color> histogramColors;
     int nChannels;
     int histogramZero;
+    int histogramZeroLinear;
 };
 
 class ImageCanvas : public nanogui::Canvas {

@@ -7,6 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build_debug/tev",
             "args": [
+                "/home/hchoi/nas/refs/veach-ajar-d3/veach-ajar-d3_640x360_depth3_32768spp.exr"
             ],
             "cwd": "${workspaceFolder}",
             "stopAtEntry": false,

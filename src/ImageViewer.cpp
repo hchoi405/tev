@@ -52,6 +52,11 @@ namespace tev {
 static const int SIDEBAR_MIN_WIDTH = 230;
 static const float CROP_MIN_SIZE = 3;
 
+namespace {
+    const string kHistogramTooltipBase =
+        "Histogram of color values. Adapts to the currently chosen channel group and error metric.";
+}
+
 // Add member for per-image exposures
 std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
 std::unordered_map<std::shared_ptr<Image>, float> mImageOffsets;
@@ -1166,12 +1171,35 @@ ImageViewer::ImageViewer(
             );
         }
 
+        // Histogram scale toggle buttons
+        {
+            auto panel = new Widget{mSidebarLayout};
+            panel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+            auto makeHistogramScaleButton = [&](string_view caption, EHistogramScale scale) {
+                auto button = new Button{panel, string{caption}};
+                button->set_flags(Button::RadioButton);
+                button->set_font_size(15);
+                button->set_callback([this, scale]() { setHistogramScale(scale); });
+                return button;
+            };
+
+            mHistogramLogButton = makeHistogramScaleButton("Log", EHistogramScale::Log);
+            mHistogramLogButton->set_tooltip("Display histogram using logarithmic bins");
+
+            mHistogramLinearButton = makeHistogramScaleButton("Linear", EHistogramScale::Linear);
+            mHistogramLinearButton->set_tooltip("Display histogram using linearly spaced bins");
+
+            mHistogramLogButton->set_pushed(true);
+        }
+
         // Histogram of selected image
         {
             auto panel = new Widget{mSidebarLayout};
             panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
             mHistogram = new MultiGraph{panel, ""};
+            setHistogramScale(mHistogramScale);
         }
 
         // Fuzzy filter of open images
@@ -1960,31 +1988,11 @@ void ImageViewer::draw_contents() {
     updateTitle();
 
     // Update histogram
-    static const string histogramTooltipBase = "Histogram of color values. Adapts to the currently chosen channel group and error metric.";
     auto lazyCanvasStatistics = mImageCanvas->canvasStatistics();
     if (lazyCanvasStatistics) {
         if (lazyCanvasStatistics->isReady()) {
             auto statistics = lazyCanvasStatistics->get();
-            mHistogram->setNChannels(statistics->nChannels);
-            mHistogram->setColors(statistics->histogramColors);
-            mHistogram->setValues(statistics->histogram);
-            mHistogram->setMinimum(statistics->minimum);
-            mHistogram->setMean(statistics->mean);
-            mHistogram->setMaximum(statistics->maximum);
-            mHistogram->setZero(statistics->histogramZero);
-            mHistogram->set_tooltip(
-                fmt::format(
-                "{}\n\n"
-                "Minimum: {:.6f}\n"
-                "Mean: {:.6f}\n"
-                "Maximum: {:.6f}\n"
-                "Variance: {:.6f}",
-                histogramTooltipBase,
-                statistics->minimum,
-                statistics->mean,
-                statistics->maximum,
-                statistics->variance)
-            );
+            applyHistogramStatistics(statistics, kHistogramTooltipBase);
         }
     } else {
         mHistogram->setNChannels(1);
@@ -1996,7 +2004,63 @@ void ImageViewer::draw_contents() {
         mHistogram->setMean(0);
         mHistogram->setMaximum(0);
         mHistogram->setZero(0);
-        mHistogram->set_tooltip(fmt::format("{}", histogramTooltipBase));
+        string scaleLabel = mHistogramScale == EHistogramScale::Linear ? "Linear" : "Log";
+        mHistogram->set_tooltip(fmt::format("{}\n\nScale: {}", kHistogramTooltipBase, scaleLabel));
+    }
+}
+
+void ImageViewer::applyHistogramStatistics(const shared_ptr<CanvasStatistics>& statistics, string_view histogramTooltipBase) {
+    if (!mHistogram) {
+        return;
+    }
+
+    bool hasLinearHistogram = !statistics->histogramLinear.empty() && statistics->histogramLinear.size() == statistics->histogram.size();
+    bool useLinear = mHistogramScale == EHistogramScale::Linear && hasLinearHistogram;
+
+    const auto& values = useLinear ? statistics->histogramLinear : statistics->histogram;
+    int zeroBin = useLinear ? statistics->histogramZeroLinear : statistics->histogramZero;
+
+    mHistogram->setNChannels(statistics->nChannels);
+    mHistogram->setColors(statistics->histogramColors);
+    mHistogram->setValues(values);
+    mHistogram->setMinimum(statistics->minimum);
+    mHistogram->setMean(statistics->mean);
+    mHistogram->setMaximum(statistics->maximum);
+    mHistogram->setZero(zeroBin);
+
+    string scaleLabel = useLinear ? "Linear" : "Log";
+    mHistogram->set_tooltip(
+        fmt::format(
+            "{}\n\nScale: {}\n\nMinimum: {:.6f}\nMean: {:.6f}\nMaximum: {:.6f}\nVariance: {:.6f}",
+            histogramTooltipBase,
+            scaleLabel,
+            statistics->minimum,
+            statistics->mean,
+            statistics->maximum,
+            statistics->variance
+        )
+    );
+}
+
+void ImageViewer::setHistogramScale(EHistogramScale scale) {
+    mHistogramScale = scale;
+
+    if (mHistogramLogButton) {
+        mHistogramLogButton->set_pushed(scale == EHistogramScale::Log);
+    }
+    if (mHistogramLinearButton) {
+        mHistogramLinearButton->set_pushed(scale == EHistogramScale::Linear);
+    }
+
+    auto lazyCanvasStatistics = mImageCanvas->canvasStatistics();
+    if (lazyCanvasStatistics && lazyCanvasStatistics->isReady()) {
+        applyHistogramStatistics(lazyCanvasStatistics->get(), kHistogramTooltipBase);
+        return;
+    }
+
+    if (mHistogram) {
+        string scaleLabel = scale == EHistogramScale::Linear ? "Linear" : "Log";
+        mHistogram->set_tooltip(fmt::format("{}\n\nScale: {}", kHistogramTooltipBase, scaleLabel));
     }
 }
 

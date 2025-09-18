@@ -193,6 +193,12 @@ public:
 
 private:
     void updateFilter();
+    void applyHistogramStatistics(const std::shared_ptr<CanvasStatistics>& statistics, std::string_view histogramTooltipBase);
+    enum class EHistogramScale {
+        Log,
+        Linear,
+    };
+    void setHistogramScale(EHistogramScale scale);
 
     struct ChannelProcessContext {
         std::vector<std::string> channelNames;
@@ -312,6 +318,10 @@ private:
 
     nanogui::Widget* mGroupButtonContainer;
     std::string mCurrentGroup;
+
+    nanogui::Button* mHistogramLogButton = nullptr;
+    nanogui::Button* mHistogramLinearButton = nullptr;
+    EHistogramScale mHistogramScale = EHistogramScale::Log;
 
     HelpWindow* mHelpWindow = nullptr;
 

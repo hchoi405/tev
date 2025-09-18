@@ -1005,6 +1005,7 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     // Now that we know the maximum and minimum value we can define our histogram bin size.
     static const size_t NUM_BINS = 400;
     result->histogram.resize(NUM_BINS * nChannels);
+    result->histogramLinear.resize(NUM_BINS * nChannels);
 
     // We're going to draw our histogram in log space.
     static const float addition = 0.001f;
@@ -1015,11 +1016,26 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     float minLog = symmetricLog(minimum);
     float diffLog = symmetricLog(maximum) - minLog;
 
-    auto valToBin = [&](float val) { return clamp((int)(NUM_BINS * (symmetricLog(val) - minLog) / diffLog), 0, (int)NUM_BINS - 1); };
+    auto valToBin = [&](float val) {
+        if (diffLog == 0.0f) {
+            return 0;
+        }
+        return clamp((int)(NUM_BINS * (symmetricLog(val) - minLog) / diffLog), 0, (int)NUM_BINS - 1);
+    };
 
     result->histogramZero = valToBin(0);
 
     auto binToVal = [&](float val) { return symmetricLogInverse((diffLog * val / NUM_BINS) + minLog); };
+
+    float linearRange = maximum - minimum;
+    auto valToBinLinear = [&](float val) {
+        if (linearRange <= 0.0f) {
+            return 0;
+        }
+        return clamp((int)(NUM_BINS * (val - minimum) / linearRange), 0, (int)NUM_BINS - 1);
+    };
+
+    result->histogramZeroLinear = valToBinLinear(0);
 
     // In the strange case that we have 0 channels, early return, because the histogram makes no sense.
     if (nChannels == 0) {
@@ -1028,7 +1044,8 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
 
     auto regionSize = region.size();
     size_t numPixels = region.area();
-    std::vector<int> indices(numPixels * nChannels);
+    std::vector<int> logIndices(numPixels * nChannels);
+    std::vector<int> linearIndices(numPixels * nChannels);
 
     vector<Task<void>> tasks;
     tasks.emplace_back(
@@ -1040,7 +1057,9 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
                 int y = (int)(j / regionSize.x()) + region.min.y();
                 for (size_t c = 0; c < nChannels; ++c) {
                     const auto& channel = flattened[c];
-                    indices[j * nChannels + c] = valToBin(channel.at({x, y}));
+                    auto value = channel.at({x, y});
+                    logIndices[j * nChannels + c] = valToBin(value);
+                    linearIndices[j * nChannels + c] = valToBinLinear(value);
                 }
             },
             priority
@@ -1058,7 +1077,9 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
             for (size_t j = 0; j < numPixels; ++j) {
                 int x = (int)(j % regionSize.x()) + region.min.x();
                 int y = (int)(j / regionSize.x()) + region.min.y();
-                result->histogram[indices[j * nChannels + c] + c * NUM_BINS] += alphaChannel ? alphaChannel->at({x, y}) : 1;
+                float weight = alphaChannel ? alphaChannel->at({x, y}) : 1.0f;
+                result->histogram[logIndices[j * nChannels + c] + c * NUM_BINS] += weight;
+                result->histogramLinear[linearIndices[j * nChannels + c] + c * NUM_BINS] += weight;
             }
         },
         priority
@@ -1066,21 +1087,39 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
 
     for (size_t i = 0; i < nChannels; ++i) {
         for (size_t j = 0; j < NUM_BINS; ++j) {
-            result->histogram[j + i * NUM_BINS] /= binToVal(j + 1) - binToVal(j);
+            float binWidthLog = binToVal(j + 1) - binToVal(j);
+            if (binWidthLog != 0.0f) {
+                result->histogram[j + i * NUM_BINS] /= binWidthLog;
+            }
+        }
+
+        float binWidthLinear = linearRange <= 0.0f ? 1.0f : linearRange / NUM_BINS;
+        if (binWidthLinear == 0.0f) {
+            binWidthLinear = 1.0f;
+        }
+        for (size_t j = 0; j < NUM_BINS; ++j) {
+            result->histogramLinear[j + i * NUM_BINS] /= binWidthLinear;
         }
     }
 
     // Normalize the histogram according to the 10th-largest element to avoid a couple spikes ruining the entire graph.
-    auto tmp = result->histogram;
-    size_t idx = tmp.size() - 10;
-    nth_element(tmp.data(), tmp.data() + idx, tmp.data() + tmp.size());
-
-    float norm = 1.0f / (std::max(tmp[idx], 0.1f) * 1.3f);
-    for (size_t i = 0; i < nChannels; ++i) {
-        for (size_t j = 0; j < NUM_BINS; ++j) {
-            result->histogram[j + i * NUM_BINS] *= norm;
+    auto normalizeHistogram = [&](std::vector<float>& histogram) {
+        if (histogram.empty()) {
+            return;
         }
-    }
+
+        auto tmp = histogram;
+        size_t idx = tmp.size() > 10 ? tmp.size() - 10 : tmp.size() - 1;
+        nth_element(tmp.begin(), tmp.begin() + idx, tmp.end());
+
+        float norm = 1.0f / (std::max(tmp[idx], 0.1f) * 1.3f);
+        for (auto& value : histogram) {
+            value *= norm;
+        }
+    };
+
+    normalizeHistogram(result->histogram);
+    normalizeHistogram(result->histogramLinear);
 
     co_return result;
 }
