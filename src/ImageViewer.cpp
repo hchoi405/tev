@@ -728,7 +728,7 @@ ImageViewer::ImageViewer(
             deleteButton->set_fixed_width(25);
 
             // Add callback to delete button
-            deleteButton->set_callback([this, cropListScrollContent, buttonContainer, x1, y1, x2, y2]() {
+            deleteButton->set_callback([this, cropListScrollContent, buttonContainer]() {
                 // First collect information about all OTHER crops before removing this one
                 std::vector<std::tuple<int, int, int, int>> remainingCrops;
 
@@ -747,12 +747,15 @@ ImageViewer::ImageViewer(
                     if (!cropButton)
                         continue;
 
+                    auto tooltip = std::string(cropButton->tooltip());
+                    auto caption = std::string(cropButton->caption());
+
                     int cx1, cy1, cx2, cy2;
                     // Try to parse coordinates from the tooltip which contains the full coordinates
-                    if (sscanf(cropButton->tooltip().c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                    if (sscanf(tooltip.c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
                         remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
                     }
-                    else if (sscanf(cropButton->caption().c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                    else if (sscanf(caption.c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
                         // Fallback to parsing from caption
                         remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
                     }
@@ -846,12 +849,16 @@ ImageViewer::ImageViewer(
         browseButton->set_callback([this, cropListScrollContent, addCropButtonCallback]() {
             try {
                 // First check if the file exists using a regular file dialog (not save mode)
-                auto fileDialog = nanogui::file_dialog(
-                    {{"txt", "Text File"}},
-                    false); // false for open dialog mode, won't ask for replacement
+                auto result = nanogui::file_dialog(
+                    this,
+                    FileDialogType::Open,
+                    {
+                        {"txt", "Text File"}
+                }
+                ); // false for open dialog mode, won't ask for replacement
 
-                if (!fileDialog.empty()) {
-                    std::string newPath = fileDialog;
+                if (result.size() == 1) {
+                    std::string newPath = result[0];
                     mCropListPathTextBox->set_value(newPath);
 
                     // Clear existing crop list UI
@@ -991,7 +998,7 @@ ImageViewer::ImageViewer(
             mStatusLabel->set_caption(statusText);
             auto preferred_size = mStatusLabel->preferred_size(m_nvg_context);
             mStatusLabel->set_fixed_width(preferred_size.x());
-            mStatusLabel->set_fixed_height(max(20, preferred_size.y()));
+            mStatusLabel->set_fixed_height(std::max(20, preferred_size.y()));
             updateLayout();
         };
 
@@ -3268,7 +3275,7 @@ void ImageViewer::updateLayout() {
     glfwGetCursorPos(m_glfw_window, &x, &y);
     cursor_pos_callback_event(x, y);
 
-    int height = min(100, mCropListContainer->preferred_size(m_nvg_context).y());
+    int height = std::min(100, mCropListContainer->preferred_size(m_nvg_context).y());
     mCropListContainer->set_fixed_height(height);
     perform_layout();
 }
