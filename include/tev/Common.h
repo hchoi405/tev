@@ -481,6 +481,8 @@ void redrawWindow();
 static const nanogui::Color IMAGE_COLOR = {0.35f, 0.35f, 0.8f, 1.0f};
 static const nanogui::Color REFERENCE_COLOR = {0.7f, 0.4f, 0.4f, 1.0f};
 static const nanogui::Color CROP_COLOR = {0.2f, 0.5f, 0.2f, 1.0f};
+static const nanogui::Color PIXEL_LOCATOR_RANGE_COLOR = {0.0f, 0.85f, 1.0f, 1.0f};
+static const nanogui::Color PIXEL_LOCATOR_PRIMARY_COLOR = {1.0f, 0.1f, 0.1f, 1.0f};
 
 // Exceptions
 class ImageLoadError : public std::runtime_error {

@@ -64,7 +64,7 @@ public:
 
     float applyExposureAndOffset(float value) const;
 
-    void setImage(std::shared_ptr<Image> image) { mImage = image; }
+    void setImage(std::shared_ptr<Image> image);
     void setReference(std::shared_ptr<Image> reference) { mReference = reference; }
     void setRequestedChannelGroup(std::string_view groupName) { mRequestedChannelGroup = groupName; }
 
@@ -96,6 +96,11 @@ public:
 
     void setCropDragging(bool dragging) { mCropDragging = dragging; }
     bool isCropDragging() const { return mCropDragging; }
+
+    void setPixelLocatorHighlights(
+        std::span<const nanogui::Vector2i> primaryPixels, std::span<const nanogui::Vector2i> rangePixels
+    );
+    void clearPixelLocatorHighlights();
 
     auto backgroundColor() { return mShader->backgroundColor(); }
     void setBackgroundColor(const nanogui::Color& color) { mShader->setBackgroundColor(color); }
@@ -180,6 +185,12 @@ private:
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mCanvasStatistics;
     std::map<int, std::vector<std::string>> mImageIdToCanvasStatisticsKey;
+
+    void ensurePixelLocatorTexture(const nanogui::Vector2i& size);
+    nanogui::ref<nanogui::Texture> mPixelLocatorHighlightTexture;
+    std::vector<uint8_t> mPixelLocatorHighlightMask;
+    bool mPixelLocatorHighlightsDirty = false;
+    bool mHasPixelLocatorHighlights = false;
 };
 
 } // namespace tev

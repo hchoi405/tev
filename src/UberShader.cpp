@@ -133,6 +133,14 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
             uniform vec2 cropMax;
 
             uniform vec4 bgColor;
+            uniform sampler2D pixelLocatorMask;
+            uniform bool hasPixelLocatorMask;
+            uniform vec4 pixelLocatorRangeColor;
+            uniform vec4 pixelLocatorPrimaryColor;
+            uniform float pixelLocatorRangeFillOpacity;
+            uniform float pixelLocatorPrimaryFillOpacity;
+            uniform float pixelLocatorBorderThickness;
+            uniform vec2 pixelLocatorTexelSize;
 
             varying vec2 checkerUv;
             varying vec2 ditherUv;
@@ -225,6 +233,41 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 return color;
             }
 
+            vec4 applyPixelLocator(vec4 color, vec2 imageCoords) {
+                if (!hasPixelLocatorMask || pixelLocatorTexelSize.x <= 0.0 || pixelLocatorTexelSize.y <= 0.0) {
+                    return color;
+                }
+
+                vec2 mask = texture2D(pixelLocatorMask, imageCoords).rg;
+                float rangeMask = clamp(mask.r, 0.0, 1.0);
+                float primaryMask = clamp(mask.g, 0.0, 1.0);
+                float combinedMask = max(rangeMask, primaryMask);
+                if (combinedMask <= 0.0) {
+                    return color;
+                }
+
+                vec2 pixelCount = vec2(1.0) / pixelLocatorTexelSize;
+                vec2 local = fract(imageCoords * pixelCount);
+                vec2 edgeDist = min(local, 1.0 - local);
+                float inner = min(edgeDist.x, edgeDist.y);
+
+                float borderWidth = clamp(pixelLocatorBorderThickness, 0.0, 0.49);
+                float borderFactor = 1.0 - step(borderWidth, inner);
+
+                float fillRangeAlpha = pixelLocatorRangeFillOpacity * rangeMask * (1.0 - primaryMask);
+                float fillPrimaryAlpha = pixelLocatorPrimaryFillOpacity * primaryMask;
+
+                float borderPrimary = borderFactor * primaryMask;
+                float borderRange = borderFactor * (1.0 - primaryMask) * rangeMask;
+
+                color.rgb = mix(color.rgb, pixelLocatorRangeColor.rgb, fillRangeAlpha);
+                color.rgb = mix(color.rgb, pixelLocatorPrimaryColor.rgb, fillPrimaryAlpha);
+                color.rgb = mix(color.rgb, pixelLocatorRangeColor.rgb, borderRange);
+                color.rgb = mix(color.rgb, pixelLocatorPrimaryColor.rgb, borderPrimary);
+
+                return color;
+            }
+
             vec4 dither(vec4 color) {
                 color.rgb += texture2D(ditherMatrix, fract(ditherUv)).r;
                 return color;
@@ -251,6 +294,7 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                         1.0
                     );
                     result.rgb = clamp(result.rgb, clipToLdr ? 0.0 : -64.0, clipToLdr ? 1.0 : 64.0);
+                    result = applyPixelLocator(result, imageUv);
                     return result;
                 }
 
@@ -265,6 +309,7 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 );
 
                 result.rgb = clamp(result.rgb, clipToLdr ? 0.0 : -64.0, clipToLdr ? 1.0 : 64.0);
+                result = applyPixelLocator(result, imageUv);
                 return result;
             }
 
@@ -424,6 +469,55 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 return color;
             }
 
+            float4 applyPixelLocator(
+                float4 color,
+                float2 imageUv,
+                texture2d<float, access::sample> mask,
+                sampler maskSampler,
+                bool hasMask,
+                float4 rangeColor,
+                float4 primaryColor,
+                float rangeFillOpacity,
+                float primaryFillOpacity,
+                float borderThickness,
+                float2 texelSize
+            ) {
+                if (!hasMask || texelSize.x <= 0.0f || texelSize.y <= 0.0f) {
+                    return color;
+                }
+
+                float2 maskValue = clamp(mask.sample(maskSampler, imageUv).rg, 0.0f, 1.0f);
+                float rangeMask = maskValue.x;
+                float primaryMask = maskValue.y;
+                float combinedMask = max(rangeMask, primaryMask);
+                if (combinedMask <= 0.0f) {
+                    return color;
+                }
+
+                float2 pixelCount = 1.0f / texelSize;
+                float2 local = fract(imageUv * pixelCount);
+                float2 edgeDist = min(local, 1.0f - local);
+                float inner = min(edgeDist.x, edgeDist.y);
+
+                float borderWidth = clamp(borderThickness, 0.0f, 0.49f);
+                float borderFactor = 1.0f - step(borderWidth, inner);
+
+                float primaryFillAlpha = clamp(primaryMask * primaryFillOpacity, 0.0f, 1.0f);
+                float rangeFillAlpha = clamp(rangeMask * (1.0f - primaryMask) * rangeFillOpacity, 0.0f, 1.0f);
+
+                float borderPrimary = borderFactor * primaryMask;
+                float borderRange = borderFactor * (1.0f - primaryMask) * rangeMask;
+                float primaryBorderAlpha = clamp(borderPrimary, 0.0f, 1.0f);
+                float rangeBorderAlpha = clamp(borderRange, 0.0f, 1.0f);
+
+                color.rgb = mix(color.rgb, rangeColor.rgb, rangeFillAlpha);
+                color.rgb = mix(color.rgb, primaryColor.rgb, primaryFillAlpha);
+                color.rgb = mix(color.rgb, rangeColor.rgb, rangeBorderAlpha);
+                color.rgb = mix(color.rgb, primaryColor.rgb, primaryBorderAlpha);
+
+                return color;
+            }
+
             fragment float4 fragment_main(
                 VertexOut vert [[stage_in]],
                 texture2d<float, access::sample> image,
@@ -434,6 +528,8 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 sampler colormap_sampler,
                 texture2d<float, access::sample> ditherMatrix,
                 sampler ditherMatrix_sampler,
+                texture2d<float, access::sample> pixelLocatorMask,
+                sampler pixelLocatorMask_sampler,
                 const constant bool& hasImage,
                 const constant bool& hasReference,
                 const constant int& channelConfig,
@@ -445,7 +541,14 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 const constant int& metric,
                 const constant float2& cropMin,
                 const constant float2& cropMax,
-                const constant float4& bgColor
+                const constant float4& bgColor,
+                const constant bool& hasPixelLocatorMask,
+                const constant float4& pixelLocatorRangeColor,
+                const constant float4& pixelLocatorPrimaryColor,
+                const constant float& pixelLocatorRangeFillOpacity,
+                const constant float& pixelLocatorPrimaryFillOpacity,
+                const constant float& pixelLocatorBorderThickness,
+                const constant float2& pixelLocatorTexelSize
             ) {
                 float3 darkGray = float3(0.5f, 0.5f, 0.5f);
                 float3 lightGray = float3(0.55f, 0.55f, 0.55f);
@@ -474,6 +577,19 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                         1.0f
                     );
                     color.rgb = clamp(color.rgb, clipToLdr ? 0.0f : -64.0f, clipToLdr ? 1.0f : 64.0f);
+                    color = applyPixelLocator(
+                        color,
+                        vert.imageUv,
+                        pixelLocatorMask,
+                        pixelLocatorMask_sampler,
+                        hasPixelLocatorMask,
+                        pixelLocatorRangeColor,
+                        pixelLocatorPrimaryColor,
+                        pixelLocatorRangeFillOpacity,
+                        pixelLocatorPrimaryFillOpacity,
+                        pixelLocatorBorderThickness,
+                        pixelLocatorTexelSize
+                    );
                     return dither(color, ditherMatrix, ditherMatrix_sampler, vert.ditherUv);
                 }
 
@@ -495,6 +611,19 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                     1.0f
                 );
                 color.rgb = clamp(color.rgb, clipToLdr ? 0.0f : -64.0f, clipToLdr ? 1.0f : 64.0f);
+                color = applyPixelLocator(
+                    color,
+                    vert.imageUv,
+                    pixelLocatorMask,
+                    pixelLocatorMask_sampler,
+                    hasPixelLocatorMask,
+                    pixelLocatorRangeColor,
+                    pixelLocatorPrimaryColor,
+                    pixelLocatorRangeFillOpacity,
+                    pixelLocatorPrimaryFillOpacity,
+                    pixelLocatorBorderThickness,
+                    pixelLocatorTexelSize
+                );
                 return dither(color, ditherMatrix, ditherMatrix_sampler, vert.ditherUv);
             })";
 #endif
@@ -562,7 +691,13 @@ void UberShader::draw(
     bool clipToLdr,
     ETonemap tonemap,
     EMetric metric,
-    const std::optional<Box2i>& crop
+    const std::optional<Box2i>& crop,
+    Texture* pixelLocatorTexture,
+    const Color& pixelLocatorRangeColor,
+    const Color& pixelLocatorPrimaryColor,
+    float pixelLocatorRangeFillOpacity,
+    float pixelLocatorPrimaryFillOpacity,
+    float pixelLocatorBorderThickness
 ) {
     // We're passing the channels found in `mImage` such that, if some channels don't exist in `mReference`, they're filled with default
     // values (0 for colors, 1 for alpha).
@@ -585,6 +720,23 @@ void UberShader::draw(
     bindCheckerboardData(pixelSize, checkerSize);
     bindImageData(textureImage, transformImage, exposure, offset, gamma, tonemap);
     bindReferenceData(textureReference, transformReference, metric);
+
+    Vector2f pixelLocatorTexelSize = Vector2f{0.0f};
+    if (pixelLocatorTexture) {
+        Vector2i size = pixelLocatorTexture->size();
+        if (size.x() > 0 && size.y() > 0) {
+            pixelLocatorTexelSize = Vector2f{1.0f / size.x(), 1.0f / size.y()};
+        }
+    }
+    bindPixelLocatorData(
+        pixelLocatorTexture,
+        pixelLocatorTexelSize,
+        pixelLocatorRangeColor,
+        pixelLocatorPrimaryColor,
+        pixelLocatorRangeFillOpacity,
+        pixelLocatorPrimaryFillOpacity,
+        pixelLocatorBorderThickness
+    );
 
     mShader->set_uniform("hasImage", (bool)image);
     mShader->set_uniform("hasReference", (bool)reference);
@@ -633,6 +785,26 @@ void UberShader::bindReferenceData(Texture* textureReference, const Matrix3f& tr
     mShader->set_uniform("referenceOffset", Vector2f{transformReference.m[2][0], transformReference.m[2][1]});
 
     mShader->set_uniform("metric", static_cast<int>(metric));
+}
+
+void UberShader::bindPixelLocatorData(
+    Texture* texturePixelLocator,
+    const Vector2f& texelSize,
+    const Color& rangeColor,
+    const Color& primaryColor,
+    float rangeFillOpacity,
+    float primaryFillOpacity,
+    float borderThickness
+) {
+    Texture* texture = texturePixelLocator ? texturePixelLocator : mColorMap.get();
+    mShader->set_texture("pixelLocatorMask", texture);
+    mShader->set_uniform("hasPixelLocatorMask", (bool)texturePixelLocator);
+    mShader->set_uniform("pixelLocatorTexelSize", texelSize);
+    mShader->set_uniform("pixelLocatorRangeColor", rangeColor);
+    mShader->set_uniform("pixelLocatorPrimaryColor", primaryColor);
+    mShader->set_uniform("pixelLocatorRangeFillOpacity", rangeFillOpacity);
+    mShader->set_uniform("pixelLocatorPrimaryFillOpacity", primaryFillOpacity);
+    mShader->set_uniform("pixelLocatorBorderThickness", borderThickness);
 }
 
 } // namespace tev

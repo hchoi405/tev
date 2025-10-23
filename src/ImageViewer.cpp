@@ -1028,6 +1028,14 @@ ImageViewer::ImageViewer(
             // Focus on the found pixel
             focusPixel(maxPos);
             updateStatusText(maxPos, maxVal, "Maximum");
+            mFoundPixels.clear();
+            mCurrentFoundPixelIdx = -1;
+            if (mFindNextRangeButton) {
+                mFindNextRangeButton->set_enabled(false);
+            }
+            mPixelLocatorRangeHighlights.clear();
+            mPixelLocatorPrimaryHighlight = maxPos;
+            updatePixelLocatorHighlightState(true);
         });
 
         auto findMinButton = new Button{searchPanel, "Find Min"};
@@ -1052,6 +1060,14 @@ ImageViewer::ImageViewer(
             // Focus on the found pixel
             focusPixel(minPos);
             updateStatusText(minPos, minVal, "Minimum");
+            mFoundPixels.clear();
+            mCurrentFoundPixelIdx = -1;
+            if (mFindNextRangeButton) {
+                mFindNextRangeButton->set_enabled(false);
+            }
+            mPixelLocatorRangeHighlights.clear();
+            mPixelLocatorPrimaryHighlight = minPos;
+            updatePixelLocatorHighlightState(true);
         });
 
         // Range search - more compact layout with labels inline
@@ -1077,7 +1093,7 @@ ImageViewer::ImageViewer(
 
         // Second row: Search buttons
         auto rangeButtonPanel = new Widget{panel};
-        rangeButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 3, 1});
+        rangeButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 3, Alignment::Fill, 3, 1});
 
         mFindRangeButton = new Button{rangeButtonPanel, "Find First"};
         mFindRangeButton->set_font_size(15);
@@ -1087,6 +1103,13 @@ ImageViewer::ImageViewer(
         mFindNextRangeButton->set_font_size(15);
         mFindNextRangeButton->set_tooltip("Find the next pixel with value in the specified range");
         mFindNextRangeButton->set_enabled(false);
+
+        mResetPixelLocatorButton = new Button{rangeButtonPanel, "Reset"};
+        mResetPixelLocatorButton->set_font_size(15);
+        mResetPixelLocatorButton->set_tooltip("Clear pixel locator highlights and results");
+        mResetPixelLocatorButton->set_callback([this]() {
+            clearPixelLocatorState(true);
+        });
 
         // Store found pixels for "Find Next" functionality
         mFoundPixels.clear();
@@ -1122,6 +1145,13 @@ ImageViewer::ImageViewer(
                     mCurrentFoundPixelIdx = 0;
                     mFindNextRangeButton->set_enabled(true);
 
+                    mPixelLocatorRangeHighlights.clear();
+                    mPixelLocatorRangeHighlights.reserve(mFoundPixels.size());
+                    for (const auto& entry : mFoundPixels) {
+                        mPixelLocatorRangeHighlights.push_back(entry.first);
+                    }
+                    mPixelLocatorPrimaryHighlight = mFoundPixels[0].first;
+
                     // Focus on the first found pixel
                     focusPixel(mFoundPixels[0].first);
                     updateStatusText(
@@ -1130,9 +1160,13 @@ ImageViewer::ImageViewer(
                         "Range",
                         fmt::format("{} of {}", 1, mFoundPixels.size())
                     );
+                    updatePixelLocatorHighlightState(true);
                 } else {
                     mFindNextRangeButton->set_enabled(false);
                     mStatusLabel->set_caption("No pixels found in the specified range");
+                    mPixelLocatorRangeHighlights.clear();
+                    mPixelLocatorPrimaryHighlight.reset();
+                    updatePixelLocatorHighlightState(true);
                 }
             } catch (const std::exception& e) {
                 mStatusLabel->set_caption(fmt::format("Error: {}", e.what()));
@@ -1143,6 +1177,7 @@ ImageViewer::ImageViewer(
             if (mFoundPixels.empty() || mCurrentFoundPixelIdx < 0) return;
 
             mCurrentFoundPixelIdx = (mCurrentFoundPixelIdx + 1) % mFoundPixels.size();
+            mPixelLocatorPrimaryHighlight = mFoundPixels[mCurrentFoundPixelIdx].first;
             focusPixel(mFoundPixels[mCurrentFoundPixelIdx].first);
             updateStatusText(
                 mFoundPixels[mCurrentFoundPixelIdx].first,
@@ -1150,6 +1185,7 @@ ImageViewer::ImageViewer(
                 "Range",
                 fmt::format("{} of {}", mCurrentFoundPixelIdx + 1, mFoundPixels.size())
             );
+            updatePixelLocatorHighlightState(true);
         });
 
         // Status label to show results - reduced height
@@ -2356,6 +2392,7 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 
         mCurrentImage = nullptr;
         mImageCanvas->setImage(nullptr);
+        clearPixelLocatorState(true);
 
         // Clear group buttons
         while (mGroupButtonContainer->child_count() > 0) {
@@ -2380,6 +2417,7 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 
     mCurrentImage = image;
     mImageCanvas->setImage(mCurrentImage);
+    clearPixelLocatorState(true);
 
     // Clear group buttons
     while (mGroupButtonContainer->child_count() > 0) {
@@ -3278,6 +3316,43 @@ void ImageViewer::updateLayout() {
     int height = std::min(100, mCropListContainer->preferred_size(m_nvg_context).y());
     mCropListContainer->set_fixed_height(height);
     perform_layout();
+}
+
+void ImageViewer::updatePixelLocatorHighlightState(bool forceRefresh) {
+    if (!mImageCanvas) {
+        return;
+    }
+
+    std::vector<nanogui::Vector2i> primaryPixels;
+    if (mPixelLocatorPrimaryHighlight.has_value()) {
+        primaryPixels.push_back(*mPixelLocatorPrimaryHighlight);
+    }
+
+    if (!forceRefresh && primaryPixels.empty() && mPixelLocatorRangeHighlights.empty()) {
+        mImageCanvas->clearPixelLocatorHighlights();
+        return;
+    }
+
+    mImageCanvas->setPixelLocatorHighlights(primaryPixels, mPixelLocatorRangeHighlights);
+}
+
+void ImageViewer::clearPixelLocatorState(bool resetStatusLabel) {
+    mFoundPixels.clear();
+    mCurrentFoundPixelIdx = -1;
+    mPixelLocatorRangeHighlights.clear();
+    mPixelLocatorPrimaryHighlight.reset();
+
+    if (mFindNextRangeButton) {
+        mFindNextRangeButton->set_enabled(false);
+    }
+
+    if (resetStatusLabel && mStatusLabel) {
+        mStatusLabel->set_caption("");
+    }
+
+    if (mImageCanvas) {
+        mImageCanvas->clearPixelLocatorHighlights();
+    }
 }
 
 void ImageViewer::updateTitle() {

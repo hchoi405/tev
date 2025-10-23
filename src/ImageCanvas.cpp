@@ -36,6 +36,12 @@ using namespace std;
 
 namespace tev {
 
+namespace {
+constexpr float kPixelLocatorBorderThickness = 0.08f;
+constexpr float kPixelLocatorRangeFillOpacity = 0.0f;
+constexpr float kPixelLocatorPrimaryFillOpacity = 0.0f;
+} // namespace
+
 ImageCanvas::ImageCanvas(Widget* parent) : Canvas{parent, 1, false, false, false} {
     // If we are rendering to a float buffer (which is the case if the screen has a float back buffer, or if the screen performs color
     // management), we don't need to dither here. The screen will do it. Otherwise, we are rendering directly to an integer buffer and we
@@ -47,6 +53,14 @@ ImageCanvas::ImageCanvas(Widget* parent) : Canvas{parent, 1, false, false, false
 
     mShader.reset(new UberShader{render_pass(), ditherScale});
     set_draw_border(false);
+}
+
+void ImageCanvas::setImage(shared_ptr<Image> image) {
+    bool changed = mImage != image;
+    mImage = image;
+    if (changed) {
+        clearPixelLocatorHighlights();
+    }
 }
 
 bool ImageCanvas::scroll_event(const Vector2i& p, const Vector2f& rel) {
@@ -88,6 +102,14 @@ void ImageCanvas::draw_contents() {
 
     Image* reference = (viewImageOnly || !mReference || image == mReference.get()) ? nullptr : mReference.get();
 
+    if (mHasPixelLocatorHighlights && mImage) {
+        ensurePixelLocatorTexture(mImage->size());
+        if (mPixelLocatorHighlightTexture && !mPixelLocatorHighlightMask.empty() && mPixelLocatorHighlightsDirty) {
+            mPixelLocatorHighlightTexture->upload(mPixelLocatorHighlightMask.data());
+            mPixelLocatorHighlightsDirty = false;
+        }
+    }
+
     mShader->draw(
         2.0f * inverse(Vector2f{m_size}) / mPixelRatio,
         Vector2f{20.0f},
@@ -106,7 +128,13 @@ void ImageCanvas::draw_contents() {
         mClipToLdr,
         mTonemap,
         mMetric,
-        imageSpaceCrop
+        imageSpaceCrop,
+        (mHasPixelLocatorHighlights && mPixelLocatorHighlightTexture) ? mPixelLocatorHighlightTexture.get() : nullptr,
+        PIXEL_LOCATOR_RANGE_COLOR,
+        PIXEL_LOCATOR_PRIMARY_COLOR,
+        kPixelLocatorRangeFillOpacity,
+        kPixelLocatorPrimaryFillOpacity,
+        kPixelLocatorBorderThickness
     );
 }
 
@@ -357,6 +385,73 @@ void ImageCanvas::drawEdgeShadows(NVGcontext* ctx) {
     nvgFillPaint(ctx, shadowPaint);
     nvgFill(ctx);
     nvgRestore(ctx);
+}
+
+void ImageCanvas::ensurePixelLocatorTexture(const Vector2i& size) {
+    if (!mPixelLocatorHighlightTexture || mPixelLocatorHighlightTexture->size() != size) {
+        mPixelLocatorHighlightTexture = new Texture{
+            Texture::PixelFormat::RA,
+            Texture::ComponentFormat::UInt8,
+            size,
+            Texture::InterpolationMode::Nearest,
+            Texture::InterpolationMode::Nearest,
+            Texture::WrapMode::ClampToEdge
+        };
+    }
+}
+
+void ImageCanvas::setPixelLocatorHighlights(span<const Vector2i> primaryPixels, span<const Vector2i> rangePixels) {
+    if (!mImage || (primaryPixels.empty() && rangePixels.empty())) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    Vector2i size = mImage->size();
+    if (size.x() <= 0 || size.y() <= 0) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    ensurePixelLocatorTexture(size);
+
+    const size_t pixels = (size_t)size.x() * size.y();
+    mPixelLocatorHighlightMask.assign(pixels * 2, 0);
+
+    auto markPixel = [&](const Vector2i& p, size_t channel) {
+        if (p.x() < 0 || p.y() < 0 || p.x() >= size.x() || p.y() >= size.y()) {
+            return false;
+        }
+        size_t idx = ((size_t)p.y() * size.x() + p.x()) * 2 + channel;
+        mPixelLocatorHighlightMask[idx] = 255;
+        return true;
+    };
+
+    bool hasRange = false;
+    for (const auto& pos : rangePixels) {
+        hasRange |= markPixel(pos, 0);
+    }
+
+    bool hasPrimary = false;
+    for (const auto& pos : primaryPixels) {
+        hasPrimary |= markPixel(pos, 1);
+    }
+
+    if (!hasRange && !hasPrimary) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    mHasPixelLocatorHighlights = true;
+    mPixelLocatorHighlightsDirty = true;
+    redrawWindow();
+}
+
+void ImageCanvas::clearPixelLocatorHighlights() {
+    mPixelLocatorHighlightMask.clear();
+    mPixelLocatorHighlightTexture = nullptr;
+    mPixelLocatorHighlightsDirty = false;
+    mHasPixelLocatorHighlights = false;
+    redrawWindow();
 }
 
 void ImageCanvas::draw(NVGcontext* ctx) {

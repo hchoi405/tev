@@ -215,6 +215,8 @@ private:
     void forEachChannelPixelValue(const ChannelProcessContext& ctx, const std::function<void(int ci, int x, int y, float val)>& fn) const;
     void updateLayout();
     void updateTitle();
+    void updatePixelLocatorHighlightState(bool forceRefresh = false);
+    void clearPixelLocatorState(bool resetStatusLabel);
     std::string groupName(size_t index);
 
     int groupId(std::string_view groupName) const;
@@ -368,9 +370,12 @@ private:
     nanogui::TextBox* mRangeMaxTextBox = nullptr;
     nanogui::Button* mFindRangeButton = nullptr;
     nanogui::Button* mFindNextRangeButton = nullptr;
+    nanogui::Button* mResetPixelLocatorButton = nullptr;
     nanogui::Label* mStatusLabel = nullptr;
     std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
     int mCurrentFoundPixelIdx = -1;
+    std::vector<nanogui::Vector2i> mPixelLocatorRangeHighlights;
+    std::optional<nanogui::Vector2i> mPixelLocatorPrimaryHighlight;
 
     // Tonemapping
     std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
