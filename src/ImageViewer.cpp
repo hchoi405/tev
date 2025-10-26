@@ -1693,7 +1693,7 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                     reloadImage(mCurrentImage);
                 }
             } else {
-                resetImage();
+                resetImage(false);
             }
             return true;
         } else if (key == GLFW_KEY_X) {
@@ -2663,7 +2663,7 @@ void ImageViewer::normalizeExposureAndOffset() {
     setOffset(-minimum * factor);
 }
 
-void ImageViewer::resetImage() {
+void ImageViewer::resetImage(bool resetView) {
     if (mSyncTonemapping->checked())
     {
         mImageExposures.clear();
@@ -2673,7 +2673,9 @@ void ImageViewer::resetImage() {
     setExposure(0);
     setOffset(0);
     setGamma(2.2f);
-    mImageCanvas->resetTransform();
+    if (resetView) {
+        mImageCanvas->resetTransform();
+    }
 }
 
 void ImageViewer::setTonemap(ETonemap tonemap) {

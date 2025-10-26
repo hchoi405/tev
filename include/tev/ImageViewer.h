@@ -121,7 +121,7 @@ public:
 
     void normalizeExposureAndOffset();
 
-    void resetImage();
+    void resetImage(bool resetView = true);
 
     EInterpolationMode minFilter() const { return mImageCanvas->minFilter(); }
     void setMinFilter(EInterpolationMode value) { mImageCanvas->setMinFilter(value); }
