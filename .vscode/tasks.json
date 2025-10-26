@@ -28,7 +28,7 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             },
             "dependsOn": ["cmake-configure:debug"]
         },
@@ -59,7 +59,7 @@
             ],
             "group": {
                 "kind": "build",
-                "isDefault": false
+                "isDefault": true
             },
             "dependsOn": ["cmake-configure:release"]
         }
