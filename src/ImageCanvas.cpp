@@ -27,6 +27,7 @@
 #include <nanogui/theme.h>
 #include <nanogui/vector.h>
 
+#include <algorithm>
 #include <fstream>
 #include <set>
 #include <span>
@@ -37,7 +38,10 @@ using namespace std;
 namespace tev {
 
 namespace {
-constexpr float kPixelLocatorBorderThickness = 0.08f;
+constexpr float kPixelLocatorSingleBaseBorderThickness = 10.f;
+constexpr float kPixelLocatorSingleMinBorderThickness = 0.01f;
+constexpr float kPixelLocatorSingleMaxBorderThickness = 0.45f;
+constexpr float kPixelLocatorRangeBorderThickness = 0.05f;
 constexpr float kPixelLocatorRangeFillOpacity = 0.0f;
 constexpr float kPixelLocatorPrimaryFillOpacity = 0.0f;
 } // namespace
@@ -102,6 +106,16 @@ void ImageCanvas::draw_contents() {
 
     Image* reference = (viewImageOnly || !mReference || image == mReference.get()) ? nullptr : mReference.get();
 
+    // Use an adaptive border only when highlighting a single pixel; range highlights keep a fixed thickness.
+    float pixelLocatorBorderThickness = kPixelLocatorRangeBorderThickness;
+    if (mPixelLocatorUseAdaptiveBorder) {
+        float currentScale = std::max(1e-4f, this->scale());
+        pixelLocatorBorderThickness = kPixelLocatorSingleBaseBorderThickness / currentScale;
+        pixelLocatorBorderThickness = std::clamp(
+            pixelLocatorBorderThickness, kPixelLocatorSingleMinBorderThickness, kPixelLocatorSingleMaxBorderThickness
+        );
+    }
+
     if (mHasPixelLocatorHighlights && mImage) {
         ensurePixelLocatorTexture(mImage->size());
         if (mPixelLocatorHighlightTexture && !mPixelLocatorHighlightMask.empty() && mPixelLocatorHighlightsDirty) {
@@ -134,7 +148,7 @@ void ImageCanvas::draw_contents() {
         PIXEL_LOCATOR_PRIMARY_COLOR,
         kPixelLocatorRangeFillOpacity,
         kPixelLocatorPrimaryFillOpacity,
-        kPixelLocatorBorderThickness
+        pixelLocatorBorderThickness
     );
 }
 
@@ -441,6 +455,8 @@ void ImageCanvas::setPixelLocatorHighlights(span<const Vector2i> primaryPixels, 
         return;
     }
 
+    mPixelLocatorUseAdaptiveBorder = rangePixels.empty();
+
     mHasPixelLocatorHighlights = true;
     mPixelLocatorHighlightsDirty = true;
     redrawWindow();
@@ -451,6 +467,7 @@ void ImageCanvas::clearPixelLocatorHighlights() {
     mPixelLocatorHighlightTexture = nullptr;
     mPixelLocatorHighlightsDirty = false;
     mHasPixelLocatorHighlights = false;
+    mPixelLocatorUseAdaptiveBorder = false;
     redrawWindow();
 }
 

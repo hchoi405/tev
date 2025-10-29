@@ -238,6 +238,10 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                     return color;
                 }
 
+                if (imageCoords.x < 0.0 || imageCoords.x > 1.0 || imageCoords.y < 0.0 || imageCoords.y > 1.0) {
+                    return color;
+                }
+
                 vec2 mask = texture2D(pixelLocatorMask, imageCoords).rg;
                 float rangeMask = clamp(mask.r, 0.0, 1.0);
                 float primaryMask = clamp(mask.g, 0.0, 1.0);
@@ -483,6 +487,10 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                 float2 texelSize
             ) {
                 if (!hasMask || texelSize.x <= 0.0f || texelSize.y <= 0.0f) {
+                    return color;
+                }
+
+                if (imageUv.x < 0.0f || imageUv.x > 1.0f || imageUv.y < 0.0f || imageUv.y > 1.0f) {
                     return color;
                 }
 

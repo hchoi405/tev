@@ -191,6 +191,7 @@ private:
     std::vector<uint8_t> mPixelLocatorHighlightMask;
     bool mPixelLocatorHighlightsDirty = false;
     bool mHasPixelLocatorHighlights = false;
+    bool mPixelLocatorUseAdaptiveBorder = false;
 };
 
 } // namespace tev
