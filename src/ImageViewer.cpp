@@ -3411,20 +3411,68 @@ string ImageViewer::groupName(size_t index) {
     return groups[index].name;
 }
 
+// Extract base layer name from a group name for matching across component types.
+// Examples: "nb000.(R,G,B)" -> "nb000", "nb000L" -> "nb000", "img00.L" -> "img00"
+static string_view extractGroupBaseName(string_view groupName) {
+    // Multi-channel format: "prefix(components)" -> extract prefix
+    if (size_t parenPos = groupName.find('('); parenPos != string::npos) {
+        groupName = groupName.substr(0, parenPos);
+    }
+    // Single-channel with dot: "prefix.X" -> extract up to dot
+    else if (size_t dotPos = groupName.rfind('.'); dotPos != string::npos) {
+        groupName = groupName.substr(0, dotPos + 1);
+    }
+    // Single-channel without dot: try stripping known component suffix
+    else if (!groupName.empty()) {
+        static constexpr string_view components[] = {
+            "R", "G", "B", "A", "X", "Y", "Z", "U", "V", "L",
+            "r", "g", "b", "a", "x", "y", "z", "u", "v", "l"
+        };
+        for (const auto& comp : components) {
+            if (groupName.size() > comp.size() && groupName.ends_with(comp)) {
+                char before = groupName[groupName.size() - comp.size() - 1];
+                if (!isalpha(before)) {
+                    groupName = groupName.substr(0, groupName.size() - comp.size());
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Normalize by removing trailing dots
+    while (!groupName.empty() && groupName.back() == '.') {
+        groupName.remove_suffix(1);
+    }
+    
+    return groupName;
+}
+
 int ImageViewer::groupId(string_view groupName) const {
     if (!mCurrentImage) {
         return 0;
     }
 
     const auto& groups = mCurrentImage->channelGroups();
-    size_t pos = 0;
-    for (; pos < groups.size(); ++pos) {
-        if (groups[pos].name == groupName) {
-            break;
+    
+    // Try exact match first
+    for (size_t i = 0; i < groups.size(); ++i) {
+        if (groups[i].name == groupName) {
+            return (int)i;
+        }
+    }
+    
+    // Fall back to base name matching to preserve focus when switching between
+    // images with same layer but different components (e.g., "nb000" <-> "nb000.(R,G,B)")
+    string_view requestedBase = extractGroupBaseName(groupName);
+    if (!requestedBase.empty()) {
+        for (size_t i = 0; i < groups.size(); ++i) {
+            if (extractGroupBaseName(groups[i].name) == requestedBase) {
+                return (int)i;
+            }
         }
     }
 
-    return pos >= groups.size() ? -1 : (int)pos;
+    return -1;
 }
 
 int ImageViewer::imageId(const shared_ptr<Image>& image) const {
