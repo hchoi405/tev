@@ -372,7 +372,7 @@ ImageViewer::ImageViewer(
     // Error metrics
     {
         mMetricButtonContainer = new Widget{mSidebarLayout};
-        mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 2});
+        mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
 
         auto makeMetricButton = [&](string_view name, function<void()> callback) {
             auto button = new Button{mMetricButtonContainer, name};
@@ -387,6 +387,7 @@ ImageViewer::ImageViewer(
         makeMetricButton("SE", [this]() { setMetric(EMetric::SquaredError); });
         makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
         makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
+        makeMetricButton("SMAPE", [this]() { setMetric(EMetric::SMAPE); });
 
         setMetric(EMetric::AbsoluteError);
 
@@ -407,7 +408,10 @@ ImageViewer::ImageViewer(
             "|i - r| / (r + 0.01)\n\n"
 
             "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.01)"
+            "(i - r)² / (r² + 0.01)\n\n"
+
+            "SMAPE (Symmetric Mean Absolute Percentage Error)\n"
+            "|i - r| / (|i| + |r| + 0.01)"
         );
     }
 

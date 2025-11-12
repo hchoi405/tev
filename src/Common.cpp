@@ -378,6 +378,8 @@ EMetric toMetric(string_view name) {
         return RelativeAbsoluteError;
     } else if (upperName == "RSE") {
         return RelativeSquaredError;
+    } else if (upperName == "SMAPE") {
+        return SMAPE;
     } else {
         return Error;
     }

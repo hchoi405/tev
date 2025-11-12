@@ -103,6 +103,7 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
             #define SQUARED_ERROR           2
             #define RELATIVE_ABSOLUTE_ERROR 3
             #define RELATIVE_SQUARED_ERROR  4
+            #define SMAPE                   5
 
             #define CHANNEL_CONFIG_R    0
             #define CHANNEL_CONFIG_RG   1
@@ -210,6 +211,8 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                     return abs(col) / (reference + vec3(0.01));
                 } else if (metric == RELATIVE_SQUARED_ERROR) {
                     return col * col / (reference * reference + vec3(0.01));
+                } else if (metric == SMAPE) {
+                    return abs(col) / (abs(col + reference) + abs(reference) + vec3(0.01));
                 }
                 return vec3(0.0);
             }
@@ -369,6 +372,7 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
             #define SQUARED_ERROR           2
             #define RELATIVE_ABSOLUTE_ERROR 3
             #define RELATIVE_SQUARED_ERROR  4
+            #define SMAPE                   5
 
             #define CHANNEL_CONFIG_R    0
             #define CHANNEL_CONFIG_RG   1
@@ -437,6 +441,7 @@ UberShader::UberShader(RenderPass* renderPass, float ditherScale) {
                     case SQUARED_ERROR:           return col * col;
                     case RELATIVE_ABSOLUTE_ERROR: return abs(col) / (reference + float3(0.01f));
                     case RELATIVE_SQUARED_ERROR:  return col * col / (reference * reference + float3(0.01f));
+                    case SMAPE:                   return abs(col) / (abs(col + reference) + abs(reference) + float3(0.01f));
                 }
                 return float3(0.0f);
             }

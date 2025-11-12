@@ -410,6 +410,7 @@ enum EMetric : int {
     SquaredError,
     RelativeAbsoluteError,
     RelativeSquaredError,
+    SMAPE,
 
     // This enum value should never be used directly. It facilitates looping over all members of this enum.
     NumMetrics,

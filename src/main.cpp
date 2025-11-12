@@ -280,11 +280,12 @@ static int mainFunc(span<const string> arguments) {
         "METRIC",
         "The metric to use when comparing two images. "
         "The available metrics are:\n"
-        "E   - Error\n"
-        "AE  - Absolute Error\n"
-        "SE  - Squared Error\n"
-        "RAE - Relative Absolute Error\n"
-        "RSE - Relative Squared Error\n"
+        "E     - Error\n"
+        "AE    - Absolute Error\n"
+        "SE    - Squared Error\n"
+        "RAE   - Relative Absolute Error\n"
+        "RSE   - Relative Squared Error\n"
+        "SMAPE - Symmetric Mean Absolute Percentage Error\n"
         "Default is E.",
         {'m', "metric"},
     };
