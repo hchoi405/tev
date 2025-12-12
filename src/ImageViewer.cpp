@@ -482,11 +482,11 @@ ImageViewer::ImageViewer(
 
         // Create a child panel for the input fields, arranged horizontally
         auto inputPanel = new Widget{panel}; // This widget is the container for the input fields
-        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 4, 1});
+        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 2, 1});
 
         // Min X text box
         auto minXPanel = new Widget{inputPanel};
-        minXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        minXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
         new Label{minXPanel, "Min X", "sans"};
         mCropXminTextBox = new TextBox{minXPanel};
         mCropXminTextBox->set_editable(true);
@@ -495,7 +495,7 @@ ImageViewer::ImageViewer(
 
         // Max X text box
         auto maxXPanel = new Widget{inputPanel};
-        maxXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        maxXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
         new Label(maxXPanel, "Max X", "sans");
         mCropXmaxTextBox = new TextBox{maxXPanel};
         mCropXmaxTextBox->set_editable(true);
@@ -504,7 +504,7 @@ ImageViewer::ImageViewer(
 
         // Min Y text box
         auto minYPanel = new Widget{inputPanel};
-        minYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        minYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
         new Label(minYPanel, "Min Y", "sans");
         mCropYminTextBox = new TextBox{minYPanel};
         mCropYminTextBox->set_editable(true);
@@ -513,7 +513,7 @@ ImageViewer::ImageViewer(
 
         // Max Y text box
         auto maxYPanel = new Widget{inputPanel};
-        maxYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+        maxYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
         new Label(maxYPanel, "Max Y", "sans");
         mCropYmaxTextBox = new TextBox{maxYPanel};
         mCropYmaxTextBox->set_editable(true);
@@ -533,6 +533,33 @@ ImageViewer::ImageViewer(
             // All validations passed
             return std::nullopt;
         };
+
+        // Button to copy the current crop coordinates
+        auto copyCropPanel = new Widget{inputPanel};
+        copyCropPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label{copyCropPanel, "Copy", "sans"};
+        auto copyCropButton = new Button{copyCropPanel, "Copy"};
+        copyCropButton->set_font_size(12);
+        copyCropButton->set_tooltip("Copy min X, max X, min Y, max Y to clipboard");
+        copyCropButton->set_callback([this, validateCrop]() {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                auto validationError = validateCrop(minX, minY, maxX, maxY);
+                if (validationError) {
+                    showErrorDialog(fmt::format("Invalid crop: {}", *validationError));
+                    return;
+                }
+
+                glfwSetClipboardString(m_glfw_window, fmt::format("{}, {}, {}, {}", minX, maxX, minY, maxY).c_str());
+                tlog::success() << "Crop copied to clipboard.";
+            } catch (const std::exception& e) {
+                showErrorDialog(fmt::format("Failed to copy crop: {}", e.what()));
+            }
+        });
 
         // Callback for when the user modifies any of the text boxes
         auto updateCrop = [this, validateCrop]() -> bool {
