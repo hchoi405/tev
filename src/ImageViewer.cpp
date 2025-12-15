@@ -2500,19 +2500,19 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
         mImageCanvas->fitImageToScreen(*mCurrentImage);
     }
     // Set exposure for the selected image
-    float exposure = 0.0f;
+    float exposure = this->exposure();
     if (mCurrentImage && mImageExposures.count(mCurrentImage)) {
         exposure = mImageExposures[mCurrentImage];
     }
     setExposure(exposure);
 
-    float offset = 0.0f;
+    float offset = this->offset();
     if (mCurrentImage && mImageOffsets.count(mCurrentImage)) {
         offset = mImageOffsets[mCurrentImage];
     }
     setOffset(offset);
 
-    float gamma = 2.2f;
+    float gamma = this->gamma();
     if (mCurrentImage && mImageGammas.count(mCurrentImage)) {
         gamma = mImageGammas[mCurrentImage];
     }
