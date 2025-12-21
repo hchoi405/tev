@@ -37,6 +37,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 #include <unordered_map>
@@ -368,12 +369,20 @@ private:
     nanogui::Button* mPixelLocatorShowHideButton = nullptr;
     nanogui::TextBox* mRangeMinTextBox = nullptr;
     nanogui::TextBox* mRangeMaxTextBox = nullptr;
-    nanogui::Button* mFindRangeButton = nullptr;
+    nanogui::Button* mFindPrevRangeButton = nullptr;
     nanogui::Button* mFindNextRangeButton = nullptr;
     nanogui::Button* mResetPixelLocatorButton = nullptr;
     nanogui::Label* mStatusLabel = nullptr;
-    std::vector<std::pair<nanogui::Vector2i, float>> mFoundPixels;
+    struct PixelLocatorRangeMatch {
+        nanogui::Vector2i pos;
+        float sortValue = 0.0f;
+        int matchCount = 0;
+        float minMatchValue = 0.0f;
+        float maxMatchValue = 0.0f;
+    };
+    std::vector<PixelLocatorRangeMatch> mFoundPixels;
     int mCurrentFoundPixelIdx = -1;
+    std::optional<std::pair<float, float>> mLastPixelLocatorRangeQuery;
     std::vector<nanogui::Vector2i> mPixelLocatorRangeHighlights;
     std::optional<nanogui::Vector2i> mPixelLocatorPrimaryHighlight;
 

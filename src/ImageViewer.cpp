@@ -40,6 +40,7 @@
 #include <nanogui/vscrollpanel.h>
 
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -1006,11 +1007,15 @@ ImageViewer::ImageViewer(
 
         //
         auto updateStatusText = [this](const Vector2i& pixelPos, float value, const string& type, const std::string& detail = "") {
-            if (!mStatusLabel || !mCurrentImage) return;
+            if (!mStatusLabel || !mCurrentImage) {
+                return;
+            }
 
             // Get the channels in the current group
             auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
-            if (channels.empty()) return;
+            if (channels.empty()) {
+                return;
+            }
 
             std::string channelName = channels[0];
             if (channels.size() > 1) {
@@ -1018,8 +1023,7 @@ ImageViewer::ImageViewer(
             }
 
             std::string statusText = fmt::format(
-                "{} Value Found\nPixel: ({}, {})\nValue: {:.6f}\nChannel: {}",
-                type, pixelPos.x(), pixelPos.y(), value, channelName
+                "{} Value Found\nPixel: ({}, {})\nValue: {:.6f}\nChannel: {}", type, pixelPos.x(), pixelPos.y(), value, channelName
             );
 
             if (!detail.empty()) {
@@ -1041,11 +1045,15 @@ ImageViewer::ImageViewer(
         findMaxButton->set_font_size(15);
         findMaxButton->set_tooltip("Find the pixel with the maximum value in the current channel/group");
         findMaxButton->set_callback([this, updateStatusText]() {
-            if (!mCurrentImage) return;
+            if (!mCurrentImage) {
+                return;
+            }
 
             // Build processing context
             ChannelProcessContext ctx;
-            if (!buildChannelProcessContext(ctx)) return;
+            if (!buildChannelProcessContext(ctx)) {
+                return;
+            }
             Vector2i maxPos{0, 0};
             float maxVal = -numeric_limits<float>::infinity();
             // Find maximum value across all channels in the current group, within crop region
@@ -1061,9 +1069,7 @@ ImageViewer::ImageViewer(
             updateStatusText(maxPos, maxVal, "Maximum");
             mFoundPixels.clear();
             mCurrentFoundPixelIdx = -1;
-            if (mFindNextRangeButton) {
-                mFindNextRangeButton->set_enabled(false);
-            }
+            mLastPixelLocatorRangeQuery.reset();
             mPixelLocatorRangeHighlights.clear();
             mPixelLocatorPrimaryHighlight = maxPos;
             updatePixelLocatorHighlightState(true);
@@ -1073,11 +1079,15 @@ ImageViewer::ImageViewer(
         findMinButton->set_font_size(15);
         findMinButton->set_tooltip("Find the pixel with the minimum value in the current channel/group");
         findMinButton->set_callback([this, updateStatusText]() {
-            if (!mCurrentImage) return;
+            if (!mCurrentImage) {
+                return;
+            }
 
             // Build processing context
             ChannelProcessContext ctx;
-            if (!buildChannelProcessContext(ctx)) return;
+            if (!buildChannelProcessContext(ctx)) {
+                return;
+            }
             Vector2i minPos{0, 0};
             float minVal = numeric_limits<float>::infinity();
             // Find minimum value across all channels in the current group
@@ -1093,9 +1103,7 @@ ImageViewer::ImageViewer(
             updateStatusText(minPos, minVal, "Minimum");
             mFoundPixels.clear();
             mCurrentFoundPixelIdx = -1;
-            if (mFindNextRangeButton) {
-                mFindNextRangeButton->set_enabled(false);
-            }
+            mLastPixelLocatorRangeQuery.reset();
             mPixelLocatorRangeHighlights.clear();
             mPixelLocatorPrimaryHighlight = minPos;
             updatePixelLocatorHighlightState(true);
@@ -1126,97 +1134,173 @@ ImageViewer::ImageViewer(
         auto rangeButtonPanel = new Widget{panel};
         rangeButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 3, Alignment::Fill, 3, 1});
 
-        mFindRangeButton = new Button{rangeButtonPanel, "Find First"};
-        mFindRangeButton->set_font_size(15);
-        mFindRangeButton->set_tooltip("Find the first pixel with value in the specified range");
+        mFindPrevRangeButton = new Button{rangeButtonPanel, "Find Prev"};
+        mFindPrevRangeButton->set_font_size(15);
+        mFindPrevRangeButton->set_tooltip("Find the previous pixel with value in the specified range (selects last if none selected)");
 
         mFindNextRangeButton = new Button{rangeButtonPanel, "Find Next"};
         mFindNextRangeButton->set_font_size(15);
-        mFindNextRangeButton->set_tooltip("Find the next pixel with value in the specified range");
-        mFindNextRangeButton->set_enabled(false);
+        mFindNextRangeButton->set_tooltip("Find the next pixel with value in the specified range (selects first if none selected)");
 
         mResetPixelLocatorButton = new Button{rangeButtonPanel, "Reset"};
         mResetPixelLocatorButton->set_font_size(15);
         mResetPixelLocatorButton->set_tooltip("Clear pixel locator highlights and results");
-        mResetPixelLocatorButton->set_callback([this]() {
-            clearPixelLocatorState(true);
-        });
+        mResetPixelLocatorButton->set_callback([this]() { clearPixelLocatorState(true); });
 
-        // Store found pixels for "Find Next" functionality
+        // Store found pixels for "Find Prev/Next" functionality
         mFoundPixels.clear();
         mCurrentFoundPixelIdx = -1;
+        mLastPixelLocatorRangeQuery.reset();
 
-        mFindRangeButton->set_callback([this, updateStatusText]() {
-            if (!mCurrentImage) return;
+        auto updateRangeResults = [this]() {
+            if (!mCurrentImage) {
+                return;
+            }
 
             try {
                 float minVal = std::stof(mRangeMinTextBox->value());
                 float maxVal = std::stof(mRangeMaxTextBox->value());
 
                 // Swap if min > max
-                if (minVal > maxVal) std::swap(minVal, maxVal);
+                if (minVal > maxVal) {
+                    std::swap(minVal, maxVal);
+                }
+
+                const auto query = std::make_pair(minVal, maxVal);
+                if (mLastPixelLocatorRangeQuery && *mLastPixelLocatorRangeQuery == query) {
+                    return;
+                }
 
                 // Build processing context
                 ChannelProcessContext ctx;
-                if (!buildChannelProcessContext(ctx)) return;
-                mFoundPixels.clear();
+                if (!buildChannelProcessContext(ctx)) {
+                    return;
+                }
 
-                // Find all pixels in the given range
+                mFoundPixels.clear();
+                mCurrentFoundPixelIdx = -1;
+                mLastPixelLocatorRangeQuery = query;
+
+                struct RangeAgg {
+                    nanogui::Vector2i pos{0, 0};
+                    int matchCount = 0;
+                    float minMatchValue = std::numeric_limits<float>::infinity();
+                    float maxMatchValue = -std::numeric_limits<float>::infinity();
+                };
+
+                    // Find all pixels in the given range, per-pixel (not per-channel).
+                std::unordered_map<int64_t, RangeAgg> matches;
                 forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
                     if (val >= minVal && val <= maxVal) {
-                        mFoundPixels.push_back({{x, y}, val});
+                        const int64_t key = (int64_t{y} << 32) | (uint32_t)x;
+                        auto& agg = matches[key];
+                        if (agg.matchCount == 0) {
+                            agg.pos = {x, y};
+                        }
+                        agg.matchCount++;
+                        agg.minMatchValue = std::min(agg.minMatchValue, val);
+                        agg.maxMatchValue = std::max(agg.maxMatchValue, val);
                     }
                 });
 
-                // Sort found pixels by value
-                std::sort(mFoundPixels.begin(), mFoundPixels.end(),
-                    [](const auto& a, const auto& b) { return a.second < b.second; });
+                mFoundPixels.reserve(matches.size());
+                for (const auto& kv : matches) {
+                    const auto& agg = kv.second;
+                    PixelLocatorRangeMatch match;
+                    match.pos = agg.pos;
+                    match.sortValue = agg.maxMatchValue;
+                    match.matchCount = agg.matchCount;
+                    match.minMatchValue = agg.minMatchValue;
+                    match.maxMatchValue = agg.maxMatchValue;
+                    mFoundPixels.emplace_back(match);
+                }
+
+                    // Sort found pixels by value (and position for stability)
+                std::sort(mFoundPixels.begin(), mFoundPixels.end(), [](const PixelLocatorRangeMatch& a, const PixelLocatorRangeMatch& b) {
+                    if (a.sortValue != b.sortValue) {
+                        return a.sortValue < b.sortValue;
+                    }
+                    if (a.pos.y() != b.pos.y()) {
+                        return a.pos.y() < b.pos.y();
+                    }
+                    return a.pos.x() < b.pos.x();
+                });
 
                 if (!mFoundPixels.empty()) {
-                    mCurrentFoundPixelIdx = 0;
-                    mFindNextRangeButton->set_enabled(true);
-
                     mPixelLocatorRangeHighlights.clear();
                     mPixelLocatorRangeHighlights.reserve(mFoundPixels.size());
                     for (const auto& entry : mFoundPixels) {
-                        mPixelLocatorRangeHighlights.push_back(entry.first);
+                        mPixelLocatorRangeHighlights.push_back(entry.pos);
                     }
-                    mPixelLocatorPrimaryHighlight = mFoundPixels[0].first;
-
-                    // Focus on the first found pixel
-                    focusPixel(mFoundPixels[0].first);
-                    updateStatusText(
-                        mFoundPixels[0].first,
-                        mFoundPixels[0].second,
-                        "Range",
-                        fmt::format("{} of {}", 1, mFoundPixels.size())
-                    );
+                    mPixelLocatorPrimaryHighlight.reset();
                     updatePixelLocatorHighlightState(true);
                 } else {
-                    mFindNextRangeButton->set_enabled(false);
                     mStatusLabel->set_caption("No pixels found in the specified range");
                     mPixelLocatorRangeHighlights.clear();
                     mPixelLocatorPrimaryHighlight.reset();
                     updatePixelLocatorHighlightState(true);
                 }
-            } catch (const std::exception& e) {
-                mStatusLabel->set_caption(fmt::format("Error: {}", e.what()));
+            } catch (const std::exception& e) { mStatusLabel->set_caption(fmt::format("Error: {}", e.what())); }
+        };
+
+        auto selectFoundPixelByIndex = [this, updateStatusText](int idx) {
+            if (idx < 0 || idx >= (int)mFoundPixels.size()) {
+                return;
             }
-        });
+            mCurrentFoundPixelIdx = idx;
+            mPixelLocatorPrimaryHighlight = mFoundPixels[mCurrentFoundPixelIdx].pos;
+            focusPixel(mFoundPixels[mCurrentFoundPixelIdx].pos);
 
-        mFindNextRangeButton->set_callback([this, updateStatusText]() {
-            if (mFoundPixels.empty() || mCurrentFoundPixelIdx < 0) return;
-
-            mCurrentFoundPixelIdx = (mCurrentFoundPixelIdx + 1) % mFoundPixels.size();
-            mPixelLocatorPrimaryHighlight = mFoundPixels[mCurrentFoundPixelIdx].first;
-            focusPixel(mFoundPixels[mCurrentFoundPixelIdx].first);
+            std::string detail;
+            if (mCurrentImage) {
+                auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+                if (channels.size() > 1) {
+                    detail = fmt::format(
+                        "{} channel(s) in range\nMin in-range: {:.6f}\nMax in-range: {:.6f}",
+                        mFoundPixels[mCurrentFoundPixelIdx].matchCount,
+                        mFoundPixels[mCurrentFoundPixelIdx].minMatchValue,
+                        mFoundPixels[mCurrentFoundPixelIdx].maxMatchValue
+                    );
+                }
+            }
             updateStatusText(
-                mFoundPixels[mCurrentFoundPixelIdx].first,
-                mFoundPixels[mCurrentFoundPixelIdx].second,
+                mFoundPixels[mCurrentFoundPixelIdx].pos,
+                mFoundPixels[mCurrentFoundPixelIdx].sortValue,
                 "Range",
-                fmt::format("{} of {}", mCurrentFoundPixelIdx + 1, mFoundPixels.size())
+                (detail.empty() ? fmt::format("{} of {}", mCurrentFoundPixelIdx + 1, mFoundPixels.size()) :
+                                  fmt::format("{} of {}\n{}", mCurrentFoundPixelIdx + 1, mFoundPixels.size(), detail))
             );
             updatePixelLocatorHighlightState(true);
+        };
+
+        mFindPrevRangeButton->set_callback([this, updateRangeResults, selectFoundPixelByIndex]() {
+            updateRangeResults();
+            if (mFoundPixels.empty()) {
+                return;
+            }
+
+            if (mCurrentFoundPixelIdx < 0) {
+                selectFoundPixelByIndex((int)mFoundPixels.size() - 1);
+                return;
+            }
+
+            const int prevIdx = (mCurrentFoundPixelIdx - 1 + (int)mFoundPixels.size()) % (int)mFoundPixels.size();
+            selectFoundPixelByIndex(prevIdx);
+        });
+
+        mFindNextRangeButton->set_callback([this, updateRangeResults, selectFoundPixelByIndex]() {
+            updateRangeResults();
+            if (mFoundPixels.empty()) {
+                return;
+            }
+
+            if (mCurrentFoundPixelIdx < 0) {
+                selectFoundPixelByIndex(0);
+                return;
+            }
+
+            const int nextIdx = (mCurrentFoundPixelIdx + 1) % (int)mFoundPixels.size();
+            selectFoundPixelByIndex(nextIdx);
         });
 
         // Status label to show results - reduced height
@@ -1227,7 +1311,7 @@ ImageViewer::ImageViewer(
         panel->set_tooltip("Find pixels of interest in the image");
 
         toggleChildrenVisibilityExceptFirst(panel);
-}
+    }
 
     // Image selection
     {
@@ -3372,12 +3456,12 @@ void ImageViewer::updatePixelLocatorHighlightState(bool forceRefresh) {
 void ImageViewer::clearPixelLocatorState(bool resetStatusLabel) {
     mFoundPixels.clear();
     mCurrentFoundPixelIdx = -1;
+    mLastPixelLocatorRangeQuery.reset();
     mPixelLocatorRangeHighlights.clear();
     mPixelLocatorPrimaryHighlight.reset();
 
-    if (mFindNextRangeButton) {
-        mFindNextRangeButton->set_enabled(false);
-    }
+    if (mFindPrevRangeButton) mFindPrevRangeButton->set_enabled(true);
+    if (mFindNextRangeButton) mFindNextRangeButton->set_enabled(true);
 
     if (resetStatusLabel && mStatusLabel) {
         mStatusLabel->set_caption("");
