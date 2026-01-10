@@ -2397,8 +2397,20 @@ void ImageViewer::replaceImage(shared_ptr<Image> image, shared_ptr<Image> replac
 
     int referenceId = imageId(mCurrentReference);
 
+    // Clean up old image's tone-mapping settings from the maps
+    mImageExposures.erase(image);
+    mImageOffsets.erase(image);
+    mImageGammas.erase(image);
+
     removeImage(image);
     insertImage(replacement, id, shallSelect);
+
+    // Reset tone-mapping to default values when reloading
+    if (shallSelect && mCurrentImage == replacement) {
+        setExposure(0.0f);
+        setOffset(0.0f);
+        setGamma(2.2f);
+    }
 
     ib = dynamic_cast<ImageButton*>(mImageButtonContainer->children()[id]);
     ib->setCaption(caption);
