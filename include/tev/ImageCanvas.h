@@ -33,12 +33,15 @@ namespace tev {
 
 struct CanvasStatistics {
     float mean;
+    float variance;
     float maximum;
     float minimum;
     std::vector<float> histogram;
+    std::vector<float> histogramLinear;
     std::vector<nanogui::Color> histogramColors;
     int nChannels;
     int histogramZero;
+    int histogramZeroLinear;
 };
 
 class ImageCanvas : public nanogui::Canvas {
@@ -61,7 +64,7 @@ public:
 
     float applyExposureAndOffset(float value) const;
 
-    void setImage(std::shared_ptr<Image> image) { mImage = image; }
+    void setImage(std::shared_ptr<Image> image);
     void setReference(std::shared_ptr<Image> reference) { mReference = reference; }
     void setRequestedChannelGroup(std::string_view groupName) { mRequestedChannelGroup = groupName; }
 
@@ -91,8 +94,16 @@ public:
     void setCrop(const std::optional<Box2i>& crop) { mCrop = crop; }
     Box2i cropInImageCoords() const;
 
+    void setCropDragging(bool dragging) { mCropDragging = dragging; }
+    bool isCropDragging() const { return mCropDragging; }
+
+    void setPixelLocatorHighlights(std::span<const nanogui::Vector2i> primaryPixels, std::span<const nanogui::Vector2i> rangePixels);
+    void clearPixelLocatorHighlights();
+
     void fitImageToScreen(const Image& image);
     void resetTransform();
+    nanogui::Matrix3f getTransform() const { return mTransform; }
+    void setTransform(const nanogui::Matrix3f& transform) { mTransform = transform; }
 
     std::optional<float> whiteLevelOverride() const { return mWhiteLevelOverride; }
     void setWhiteLevelOverride(std::optional<float> value) { mWhiteLevelOverride = value; }
@@ -113,7 +124,8 @@ public:
     // does not currently hold an image, or no channels are displayed, then zero pixels are returned.
     nanogui::Vector2i imageDataSize() const { return cropInImageCoords().size(); }
     HeapArray<float> getHdrImageData(bool divideAlpha, int priority) const;
-    HeapArray<char> getLdrImageData(bool divideAlpha, int priority) const;
+    HeapArray<char>
+        getLdrImageData(bool divideAlpha, int priority, const std::function<HeapArray<float>(const HeapArray<float>&)>& processHdr = {}) const;
 
     void saveImage(const fs::path& filename) const;
 
@@ -173,9 +185,17 @@ private:
     ETonemap mTonemap = ETonemap::None;
     EMetric mMetric = EMetric::Error;
     std::optional<Box2i> mCrop;
+    bool mCropDragging = false;
 
     std::map<std::string, std::shared_ptr<Lazy<std::shared_ptr<CanvasStatistics>>>> mCanvasStatistics;
     std::map<int, std::vector<std::string>> mImageIdToCanvasStatisticsKey;
+
+    void ensurePixelLocatorTexture(const nanogui::Vector2i& size);
+    nanogui::ref<nanogui::Texture> mPixelLocatorHighlightTexture;
+    std::vector<uint8_t> mPixelLocatorHighlightMask;
+    bool mPixelLocatorHighlightsDirty = false;
+    bool mHasPixelLocatorHighlights = false;
+    bool mPixelLocatorUseAdaptiveBorder = false;
 };
 
 } // namespace tev

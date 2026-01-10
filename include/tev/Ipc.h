@@ -82,6 +82,8 @@ public:
         UpdateImageV3 = 6, // Adds custom striding/offset support
         OpenImageV2 = 7,   // Explicit separation of image name and channel selector
         VectorGraphics = 8,
+        ExposureControl = 9,
+        SyncExposureControl = 10,
     };
 
     IpcPacket() = default;
@@ -119,6 +121,8 @@ public:
         std::string_view imageName, bool grabFocus, int32_t width, int32_t height, int32_t nChannels, std::span<const std::string> channelNames
     );
     void setVectorGraphics(std::string_view imageName, bool grabFocus, bool append, std::span<const VgCommand> commands);
+    void setExposure(float exposure);
+    void setSyncExposure(bool sync);
 
     IpcPacketOpenImage interpretAsOpenImage() const;
     IpcPacketReloadImage interpretAsReloadImage() const;
@@ -126,6 +130,8 @@ public:
     IpcPacketUpdateImage interpretAsUpdateImage() const;
     IpcPacketCreateImage interpretAsCreateImage() const;
     IpcPacketVectorGraphics interpretAsVectorGraphics() const;
+    float interpretAsExposure() const;
+    bool interpretAsSyncExposure() const;
 
 private:
     std::vector<char> mPayload;

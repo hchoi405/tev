@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <tev/CropButton.h>
 #include <tev/Image.h>
 #include <tev/ImageViewer.h>
 #include <tev/WaylandClipboard.h>
@@ -42,9 +43,12 @@
 #    include <nanogui/metal.h>
 #endif
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace nanogui;
 using namespace std;
@@ -53,6 +57,15 @@ namespace tev {
 
 static const int SIDEBAR_MIN_WIDTH = 230;
 static const float CROP_MIN_SIZE = 3;
+
+namespace {
+const string kHistogramTooltipBase = "Histogram of color values. Adapts to the currently chosen channel group and error metric.";
+}
+
+// Add member for per-image exposures
+std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
+std::unordered_map<std::shared_ptr<Image>, float> mImageOffsets;
+std::unordered_map<std::shared_ptr<Image>, float> mImageGammas;
 
 ImageViewer::ImageViewer(
     const Vector2i& size, const shared_ptr<BackgroundImagesLoader>& imagesLoader, weak_ptr<Ipc> ipc, bool maximize, bool showUi, bool floatBuffer
@@ -88,6 +101,16 @@ ImageViewer::ImageViewer(
 
     m_background = Color{0.23f, 1.0f};
 
+    // Initialize crop list file path to user's home directory for cross-platform compatibility
+    try {
+        auto homeDir = fs::path(getenv("HOME") ? getenv("HOME") : getenv("USERPROFILE") ? getenv("USERPROFILE") : ".");
+        mCropListFilename = (homeDir / "cropList.txt").string();
+    } catch (const std::exception& e) {
+        std::cerr << "Error setting home directory for crop list: " << e.what() << std::endl;
+        // Fall back to current directory if there's an error
+        mCropListFilename = "cropList.txt";
+    }
+
     mVerticalScreenSplit = new Widget{this};
     mVerticalScreenSplit->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill});
 
@@ -111,12 +134,56 @@ ImageViewer::ImageViewer(
     mImageCanvas = new ImageCanvas{horizontalScreenSplit};
     mImageCanvas->setPixelRatio(pixel_ratio());
 
-    // Tonemapping sectionim
+    // Tonemapping section
     {
         auto panel = new Widget{mSidebarLayout};
         panel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
         new Label{panel, "Tonemapping", "sans-bold", 25};
         panel->set_tooltip("Various tonemapping options. Hover the individual controls to learn more!");
+
+        // Checkbox for syncing tonemapping values
+        auto row = new Widget{panel};
+        row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+        mSyncTonemapping = new CheckBox{row, "Sync"};
+        mSyncTonemapping->set_font_size(15);
+        mSyncTonemapping->set_checked(true);
+        mSyncTonemapping->set_tooltip("If checked, changing exposure will apply to all images.");
+
+        // Add callback for sync checkbox
+        mSyncTonemapping->set_callback([this](bool checked) {
+            if (checked && mCurrentImage) {
+                // When sync is enabled, propagate the current image's settings to all images
+                float exposure = 0.0f;
+                if (mImageExposures.count(mCurrentImage)) {
+                    exposure = mImageExposures[mCurrentImage];
+                }
+                setExposure(exposure);
+
+                float offset = 0.0f;
+                if (mImageOffsets.count(mCurrentImage)) {
+                    offset = mImageOffsets[mCurrentImage];
+                }
+                for (auto& pair : mImageOffsets) {
+                    pair.second = offset;
+                }
+                if (!mImageOffsets.count(mCurrentImage)) {
+                    mImageOffsets[mCurrentImage] = offset;
+                }
+                setOffset(offset);
+
+                float gamma = 2.2f;
+                if (mImageGammas.count(mCurrentImage)) {
+                    gamma = mImageGammas[mCurrentImage];
+                }
+                for (auto& pair : mImageGammas) {
+                    pair.second = gamma;
+                }
+                if (!mImageGammas.count(mCurrentImage)) {
+                    mImageGammas[mCurrentImage] = gamma;
+                }
+                setGamma(gamma);
+            }
+        });
 
         // Exposure label and slider
         {
@@ -356,10 +423,36 @@ ImageViewer::ImageViewer(
         );
     }
 
+    auto toggleChildrenVisibilityExceptFirst = [](Widget* parentPanel) {
+        // Hide all children except the first one (which is the header panel)
+        for (auto& child : parentPanel->children()) {
+            if (child != parentPanel->children().front()) {
+                child->set_visible(!child->visible());
+            }
+        }
+    };
+
+    // Helper for creating a show/hide button for panels
+    auto createShowHideButton = [this, toggleChildrenVisibilityExceptFirst](Widget* parentPanel, const string& tooltip) -> Button* {
+        // Assume the first child is the header panel
+        auto headerPanel = parentPanel->children().front();
+
+        auto button = new Button{headerPanel, "", FA_EYE};
+        button->set_font_size(15);
+        button->set_flags(Button::ToggleButton);
+        button->set_pushed(false);
+        button->set_tooltip(tooltip);
+        button->set_change_callback([this, parentPanel, toggleChildrenVisibilityExceptFirst](bool value) {
+            toggleChildrenVisibilityExceptFirst(parentPanel);
+            updateLayout();
+        });
+        return button;
+    };
+
     // Error metrics
     {
         mMetricButtonContainer = new Widget{mSidebarLayout};
-        mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 2});
+        mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
 
         auto makeMetricButton = [&](string_view name, function<void()> callback) {
             auto button = new Button{mMetricButtonContainer, name};
@@ -374,6 +467,7 @@ ImageViewer::ImageViewer(
         makeMetricButton("SE", [this]() { setMetric(EMetric::SquaredError); });
         makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
         makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
+        makeMetricButton("SMAPE", [this]() { setMetric(EMetric::SMAPE); });
 
         setMetric(EMetric::AbsoluteError);
 
@@ -394,8 +488,905 @@ ImageViewer::ImageViewer(
             "|i - r| / (r + 0.01)\n\n"
 
             "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.01)"
+            "(i - r)² / (r² + 0.01)\n\n"
+
+            "SMAPE (Symmetric Mean Absolute Percentage Error)\n"
+            "|i - r| / (|i| + |r| + 0.01)"
         );
+    }
+
+    // Copy size modifier
+    {
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+
+        new Label{headerPanel, "Copy Resize", "sans-bold", 25};
+
+        mCopyResizeShowHideButton = createShowHideButton(panel, "Show/Hide copy resize box");
+
+        auto clipResizePanel = new Widget{panel};
+        clipResizePanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+        auto selectResizeMode = [this](EClipResizeMode mode) { mClipResizeMode = mode; };
+
+        auto neareastButton = new Button{clipResizePanel, "Nearest"};
+        neareastButton->set_flags(Button::RadioButton);
+        neareastButton->set_font_size(15);
+        neareastButton->set_callback([selectResizeMode]() { selectResizeMode(EClipResizeMode::Nearest); });
+
+        auto linearButton = new Button{clipResizePanel, "Bilinear"};
+        linearButton->set_flags(Button::RadioButton);
+        linearButton->set_font_size(15);
+        linearButton->set_callback([selectResizeMode]() { selectResizeMode(EClipResizeMode::Bilinear); });
+
+        // Default
+        if (mClipResizeMode == EClipResizeMode::Nearest) {
+            neareastButton->set_pushed(true);
+        } else if (mClipResizeMode == EClipResizeMode::Bilinear) {
+            linearButton->set_pushed(true);
+        }
+
+        auto inputPanel = new Widget{panel};
+        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+        mCopyResizeXTextBox = new TextBox{inputPanel};
+        mCopyResizeXTextBox->set_editable(true);
+        mCopyResizeXTextBox->set_value("1");
+        mCopyResizeXTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mCopyResizeXTextBox->set_font_size(15);
+
+        mCopyResizeYTextBox = new TextBox{inputPanel};
+        mCopyResizeYTextBox->set_editable(true);
+        mCopyResizeYTextBox->set_value("1");
+        mCopyResizeYTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mCopyResizeYTextBox->set_font_size(15);
+
+        toggleChildrenVisibilityExceptFirst(panel);
+    }
+
+    // Crop box
+    {
+        // Main panel for the Crop section, using a vertical layout to stack elements
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+        // Add the label in the first row
+        new Label{headerPanel, "Crop", "sans-bold", 25};
+        // Create a button to toggle the visibility of the crop box
+        mCropShowHideButton = createShowHideButton(panel, "Show/Hide crop box");
+
+        // Create a child panel for the input fields, arranged horizontally
+        auto inputPanel = new Widget{panel}; // This widget is the container for the input fields
+        inputPanel->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 2, 1});
+
+        // Min X text box
+        auto minXPanel = new Widget{inputPanel};
+        minXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label{minXPanel, "Min X", "sans"};
+        mCropXminTextBox = new TextBox{minXPanel};
+        mCropXminTextBox->set_editable(true);
+        mCropXminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.x() : 0));
+        mCropXminTextBox->set_font_size(15);
+
+        // Max X text box
+        auto maxXPanel = new Widget{inputPanel};
+        maxXPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label(maxXPanel, "Max X", "sans");
+        mCropXmaxTextBox = new TextBox{maxXPanel};
+        mCropXmaxTextBox->set_editable(true);
+        mCropXmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() : 0));
+        mCropXmaxTextBox->set_font_size(15);
+
+        // Min Y text box
+        auto minYPanel = new Widget{inputPanel};
+        minYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label(minYPanel, "Min Y", "sans");
+        mCropYminTextBox = new TextBox{minYPanel};
+        mCropYminTextBox->set_editable(true);
+        mCropYminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.y() : 0));
+        mCropYminTextBox->set_font_size(15);
+
+        // Max Y text box
+        auto maxYPanel = new Widget{inputPanel};
+        maxYPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label(maxYPanel, "Max Y", "sans");
+        mCropYmaxTextBox = new TextBox{maxYPanel};
+        mCropYmaxTextBox->set_editable(true);
+        mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
+        mCropYmaxTextBox->set_font_size(15);
+
+        // Helper function to validate crop dimensions
+        auto validateCrop = [](int minX, int minY, int maxX, int maxY) -> std::optional<std::string> {
+            // Check if min coordinates are greater than or equal to max coordinates
+            if (minX >= maxX) {
+                return "Min X " + std::to_string(minX) + " must be less than Max X " + std::to_string(maxX);
+            }
+            if (minY >= maxY) {
+                return "Min Y " + std::to_string(minY) + " must be less than Max Y " + std::to_string(maxY);
+            }
+
+            // All validations passed
+            return std::nullopt;
+        };
+
+        // Button to copy the current crop coordinates
+        auto copyCropPanel = new Widget{inputPanel};
+        copyCropPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2});
+        new Label{copyCropPanel, "Copy", "sans"};
+        auto copyCropButton = new Button{copyCropPanel, "Copy"};
+        copyCropButton->set_font_size(12);
+        copyCropButton->set_tooltip("Copy min X, max X, min Y, max Y to clipboard");
+        copyCropButton->set_callback([this, validateCrop]() {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                auto validationError = validateCrop(minX, minY, maxX, maxY);
+                if (validationError) {
+                    showErrorDialog(fmt::format("Invalid crop: {}", *validationError));
+                    return;
+                }
+
+                glfwSetClipboardString(m_glfw_window, fmt::format("{}, {}, {}, {}", minX, maxX, minY, maxY).c_str());
+                tlog::success() << "Crop copied to clipboard.";
+            } catch (const std::exception& e) { showErrorDialog(fmt::format("Failed to copy crop: {}", e.what())); }
+        });
+
+        // Callback for when the user modifies any of the text boxes
+        auto updateCrop = [this, validateCrop]() -> bool {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                // Validate crop dimensions
+                auto validationError = validateCrop(minX, minY, maxX, maxY);
+                if (validationError) {
+                    std::cerr << "Invalid crop: " << *validationError << std::endl;
+                    return false;
+                }
+
+                // Update the crop box with the new values
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
+
+                // Update the width/height text boxes without triggering their callbacks
+                if (!mUpdatingFromSizeFields) {
+                    mUpdatingFromMinMax = true;
+                    mCropWidthTextBox->set_value(std::to_string(maxX - minX));
+                    mCropHeightTextBox->set_value(std::to_string(maxY - minY));
+                    mUpdatingFromMinMax = false;
+                }
+
+                return true; // Callback successfully handled the change
+            } catch (const std::exception& e) {
+                std::cerr << "Invalid input: " << e.what() << std::endl;
+                return false; // Return false to indicate failure
+            }
+        };
+
+        // Alternative callback for width/height text boxes
+        auto updateCropFromSize = [this, validateCrop]() -> bool {
+            try {
+                if (mUpdatingFromMinMax) {
+                    return true; // Avoid recursive updates
+                }
+
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int width = std::stoi(this->mCropWidthTextBox->value());
+                int height = std::stoi(this->mCropHeightTextBox->value());
+
+                // Validate crop dimensions using the calculated max values
+                auto validationError = validateCrop(minX, minY, minX + width, minY + height);
+                if (validationError) {
+                    std::cerr << "Invalid crop: " << *validationError << std::endl;
+                    return false;
+                }
+
+                // Update the crop box with the new values
+                mUpdatingFromSizeFields = true;
+
+                // Update max text boxes
+                mCropXmaxTextBox->set_value(std::to_string(minX + width));
+                mCropYmaxTextBox->set_value(std::to_string(minY + height));
+
+                // Update the crop box
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(minX + width, minY + height)));
+
+                mUpdatingFromSizeFields = false;
+                return true; // Callback successfully handled the change
+            } catch (const std::exception& e) {
+                std::cerr << "Invalid input: " << e.what() << std::endl;
+                return false; // Return false to indicate failure
+            }
+        };
+
+        // Set callbacks for the input boxes
+        mCropXminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropYminTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropXmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+        mCropYmaxTextBox->set_callback([updateCrop](const std::string&) { return updateCrop(); });
+
+        // Add width/height text boxes in a compact layout
+        auto dimensionsPanel = new Widget{panel};
+        dimensionsPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 4, 1});
+
+        // Width text box
+        auto widthPanel = new Widget{dimensionsPanel};
+        widthPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5});
+        new Label{widthPanel, "Width", "sans", 15};
+        mCropWidthTextBox = new TextBox{widthPanel};
+        mCropWidthTextBox->set_editable(true);
+        mCropWidthTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() - mCurrCrop->min.x() : 0));
+        mCropWidthTextBox->set_font_size(15);
+        mCropWidthTextBox->set_fixed_width(55);
+
+        // Height text box
+        auto heightPanel = new Widget{dimensionsPanel};
+        heightPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5});
+        new Label{heightPanel, "Height", "sans", 15};
+        mCropHeightTextBox = new TextBox{heightPanel};
+        mCropHeightTextBox->set_editable(true);
+        mCropHeightTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() - mCurrCrop->min.y() : 0));
+        mCropHeightTextBox->set_font_size(15);
+        mCropHeightTextBox->set_fixed_width(55);
+
+        // Set callbacks for width/height text boxes
+        mCropWidthTextBox->set_callback([updateCropFromSize](const std::string&) { return updateCropFromSize(); });
+        mCropHeightTextBox->set_callback([updateCropFromSize](const std::string&) { return updateCropFromSize(); });
+
+        // Create a panel for the crop list file path
+        auto cropFilePathPanel = new Widget{panel};
+        cropFilePathPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5, 0});
+
+        // Label for the crop list file path
+        new Label{cropFilePathPanel, "Crop List File:", "sans-bold"};
+
+        // Create a button to browse for a new crop list file
+        auto browseButton = new Button{cropFilePathPanel, "", FA_FOLDER_OPEN};
+        browseButton->set_font_size(15);
+        browseButton->set_tooltip("Browse for a crop list file");
+
+        // Create the text box to display and edit the crop list file path directly in the panel
+        mCropListPathTextBox = new TextBox{cropFilePathPanel};
+        mCropListPathTextBox->set_editable(true);
+
+        // Convert initial relative path to absolute path if needed
+        try {
+            if (!mCropListFilename.empty() && !fs::path(mCropListFilename).is_absolute()) {
+                mCropListFilename = fs::absolute(mCropListFilename).string();
+            }
+        } catch (const fs::filesystem_error& e) { std::cerr << "Error converting initial path to absolute: " << e.what() << std::endl; }
+
+        mCropListPathTextBox->set_value(mCropListFilename);
+        mCropListPathTextBox->set_font_size(15);
+        mCropListPathTextBox->set_tooltip("Path to the crop list file");
+        mCropListPathTextBox->set_alignment(TextBox::Alignment::Left);
+        mCropListPathTextBox->set_fixed_width(mSidebar->fixed_width() - 130); // Give enough width for the text box
+
+        auto cropWindowPanel = new Widget{panel};
+        cropWindowPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 2, 1});
+
+        auto cropButtonPanel = new Widget{cropWindowPanel};
+        cropButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 1, Alignment::Fill});
+        auto cropButtonAdd = new Button{cropButtonPanel, "Add", FA_PLUS};
+        cropButtonAdd->set_font_size(15);
+        cropButtonAdd->set_tooltip("Add current crop to the list");
+
+        mCropListContainer = new VScrollPanel{cropWindowPanel};
+        mCropListContainer->set_fixed_width(mSidebarLayout->fixed_width());
+
+        auto cropListScrollContent = new Widget{mCropListContainer};
+        cropListScrollContent->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill});
+
+        mCropListFile = std::fstream(mCropListFilename, std::ios::in | std::ios::out);
+        // Create the file if it doesn't exist
+        if (!mCropListFile) {
+            mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+        }
+
+        auto addCropButtonCallback = [this, cropListScrollContent, validateCrop](int x1, int y1, int x2, int y2) {
+            auto valid_out = validateCrop(x1, y1, x2, y2);
+            if (valid_out) {
+                std::cerr << "Invalid crop: " << *valid_out << std::endl;
+                return;
+            }
+
+            auto cropWindow = new Box2i(Vector2i(x1, y1), Vector2i(x2, y2));
+
+            // Create a container widget with horizontal layout for the crop button and delete button
+            auto buttonContainer = new Widget{cropListScrollContent};
+            buttonContainer->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 0, 2});
+
+            // Create a shortened caption that fits within the available space
+            std::string fullCaption = fmt::format("({}, {}) - ({}, {}) (w:{}, h:{})", x1, y1, x2, y2, x2 - x1, y2 - y1);
+
+            // Create the crop button with shortened text if needed
+            auto button = new Button{buttonContainer, fullCaption};
+            button->set_font_size(12);
+            button->set_tooltip(fullCaption); // Show full coordinates in tooltip
+
+            button->set_callback([this, cropWindow]() {
+                mImageCanvas->setCrop(*cropWindow);
+                mCurrCrop = *cropWindow;
+
+                // Update the text boxes with the new crop values
+                mCropXminTextBox->set_value(std::to_string(cropWindow->min.x()));
+                mCropYminTextBox->set_value(std::to_string(cropWindow->min.y()));
+                mCropXmaxTextBox->set_value(std::to_string(cropWindow->max.x()));
+                mCropYmaxTextBox->set_value(std::to_string(cropWindow->max.y()));
+                mCropWidthTextBox->set_value(std::to_string(cropWindow->max.x() - cropWindow->min.x()));
+                mCropHeightTextBox->set_value(std::to_string(cropWindow->max.y() - cropWindow->min.y()));
+            });
+
+            // Create the delete button
+            auto deleteButton = new Button{buttonContainer, "", FA_TIMES};
+            deleteButton->set_font_size(15);
+            deleteButton->set_tooltip("Delete this crop");
+            deleteButton->set_fixed_width(25);
+
+            // Add callback to delete button
+            deleteButton->set_callback([this, cropListScrollContent, buttonContainer]() {
+                // First collect information about all OTHER crops before removing this one
+                std::vector<std::tuple<int, int, int, int>> remainingCrops;
+
+                // Store all crops except for this one
+                for (auto& child : cropListScrollContent->children()) {
+                    // Skip the container being removed
+                    if (child == buttonContainer) {
+                        continue;
+                    }
+
+                    auto* cropButtonContainer = dynamic_cast<Widget*>(child);
+                    if (!cropButtonContainer || cropButtonContainer->child_count() < 1) {
+                        continue;
+                    }
+
+                    // Access the crop button which is the first child in the container
+                    auto* cropButton = dynamic_cast<Button*>(cropButtonContainer->child_at(0));
+                    if (!cropButton) {
+                        continue;
+                    }
+
+                    auto tooltip = std::string(cropButton->tooltip());
+                    auto caption = std::string(cropButton->caption());
+
+                    int cx1, cy1, cx2, cy2;
+                    // Try to parse coordinates from the tooltip which contains the full coordinates
+                    if (sscanf(tooltip.c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                        remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
+                    } else if (sscanf(caption.c_str(), "(%d, %d) - (%d, %d)", &cx1, &cy1, &cx2, &cy2) == 4) {
+                        // Fallback to parsing from caption
+                        remainingCrops.emplace_back(cx1, cy1, cx2, cy2);
+                    }
+                }
+
+                // Remove this crop container from UI
+                cropListScrollContent->remove_child(buttonContainer);
+
+                // Rewrite the file with remaining crops
+                if (mCropListFile.is_open()) {
+                    mCropListFile.close();
+                }
+
+                // Reopen file for writing (clearing it)
+                mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+
+                // Write all remaining crops
+                for (const auto& [cx1, cy1, cx2, cy2] : remainingCrops) {
+                    mCropListFile << cx1 << " " << cy1 << " " << cx2 << " " << cy2 << std::endl;
+                }
+
+                // Update layout
+                updateLayout();
+            });
+        };
+
+        // Setup callbacks for the file path text box and browse button
+        mCropListPathTextBox->set_callback([this, cropListScrollContent, addCropButtonCallback](const std::string& newPath) -> bool {
+            // Convert relative path to absolute path if needed
+            std::string absolutePath = newPath;
+            if (!newPath.empty() && !fs::path(newPath).is_absolute()) {
+                try {
+                    absolutePath = fs::absolute(newPath).string();
+                } catch (const fs::filesystem_error& e) {
+                    std::cerr << "Error converting to absolute path: " << e.what() << std::endl;
+                    return false;
+                }
+            }
+
+            if (absolutePath != mCropListFilename) {
+                mCropListFilename = absolutePath;
+                // Update the textbox to show the absolute path
+                mCropListPathTextBox->set_value(absolutePath);
+
+                // Close current file if open
+                if (mCropListFile.is_open()) {
+                    mCropListFile.close();
+                }
+
+                // Clear existing crop list UI
+                while (cropListScrollContent->child_count() > 0) {
+                    cropListScrollContent->remove_child_at(cropListScrollContent->child_count() - 1);
+                }
+
+                // Check if the file exists and try to load crop entries
+                bool fileExists = fs::exists(toPath(absolutePath));
+
+                if (fileExists) {
+                    // Attempt to open the existing file for reading and writing
+                    mCropListFile = std::fstream(mCropListFilename, std::ios::in | std::ios::out);
+
+                    // Read contents from the file and add them to the UI
+                    std::string line;
+                    while (std::getline(mCropListFile, line)) {
+                        std::istringstream iss(line);
+                        int x1, y1, x2, y2;
+                        if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                            std::cerr << "Invalid crop window: " << line << std::endl;
+                            continue;
+                        }
+                        addCropButtonCallback(x1, y1, x2, y2);
+                    }
+
+                    // File already open for reading and writing
+                } else {
+                    // Create a new file if it doesn't exist
+                    mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+                    if (!mCropListFile) {
+                        std::cerr << "Failed to create crop list file: " << mCropListFilename << std::endl;
+                        return false;
+                    }
+                }
+
+                // Update layout to reflect changes
+                updateLayout();
+            }
+            return true;
+        });
+
+        // Add a callback to the browse button to open a file dialog
+        browseButton->set_callback([this, cropListScrollContent, addCropButtonCallback]() {
+            try {
+                // First check if the file exists using a regular file dialog (not save mode)
+                auto result = nanogui::file_dialog(
+                    this,
+                    FileDialogType::Open,
+                    {
+                        {"txt", "Text File"}
+                }
+                ); // false for open dialog mode, won't ask for replacement
+
+                if (result.size() == 1) {
+                    std::string newPath = result[0];
+                    mCropListPathTextBox->set_value(newPath);
+
+                    // Clear existing crop list UI
+                    while (cropListScrollContent->child_count() > 0) {
+                        cropListScrollContent->remove_child_at(cropListScrollContent->child_count() - 1);
+                    }
+
+                    // Also reset the current crop selection
+                    mImageCanvas->setCrop(std::nullopt);
+                    mCurrCrop = std::nullopt;
+
+                    // Check if the file exists
+                    bool fileExists = fs::exists(toPath(newPath));
+
+                    if (fileExists) {
+                        // File exists, we'll open it
+                        if (mCropListFile.is_open()) {
+                            mCropListFile.close();
+                        }
+
+                        // Open the existing file for reading and writing
+                        mCropListFile = std::fstream(newPath, std::ios::in | std::ios::out);
+
+                        // Read and parse the crop entries
+                        mCropListFile.seekg(0, std::ios::beg); // Reset position to beginning of file
+                        std::string line;
+                        while (std::getline(mCropListFile, line)) {
+                            std::istringstream iss(line);
+                            int x1, y1, x2, y2;
+                            if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                                std::cerr << "Invalid crop window: " << line << std::endl;
+                                continue;
+                            }
+                            addCropButtonCallback(x1, y1, x2, y2);
+                        }
+                    } else {
+                        // File doesn't exist, create it
+                        mCropListFilename = newPath;
+                        if (mCropListFile.is_open()) {
+                            mCropListFile.close();
+                        }
+                        mCropListFile = std::fstream(mCropListFilename, std::ios::out);
+                        if (!mCropListFile) {
+                            std::cerr << "Failed to create crop list file: " << mCropListFilename << std::endl;
+                        }
+                    }
+
+                    // Update the stored filename
+                    mCropListFilename = newPath;
+
+                    // Update layout
+                    updateLayout();
+                }
+                // If fileDialog is empty, the user canceled the dialog, so we do nothing
+            } catch (const std::exception& e) {
+                // Handle any exceptions that may occur during file dialog
+                std::cerr << "Error in file dialog: " << e.what() << std::endl;
+                // Don't change the path if there was an error
+            }
+        });
+
+        // Read each line and parse the crop window
+        std::string line;
+        while (std::getline(mCropListFile, line)) {
+            std::istringstream iss(line);
+            int x1, y1, x2, y2;
+            if (!(iss >> x1 >> y1 >> x2 >> y2)) {
+                std::cerr << "Invalid crop window: " << line << std::endl;
+                continue;
+            }
+            addCropButtonCallback(x1, y1, x2, y2);
+        }
+
+        // Bind callbacks to the add button
+        cropButtonAdd->set_callback([this, addCropButtonCallback, validateCrop]() {
+            try {
+                int minX = std::stoi(this->mCropXminTextBox->value());
+                int minY = std::stoi(this->mCropYminTextBox->value());
+                int maxX = std::stoi(this->mCropXmaxTextBox->value());
+                int maxY = std::stoi(this->mCropYmaxTextBox->value());
+
+                auto valid_out = validateCrop(minX, minY, maxX, maxY);
+                if (valid_out) {
+                    std::cerr << "Invalid crop: " << *valid_out << std::endl;
+                    return;
+                }
+
+                // Update the crop box with the new values
+                mImageCanvas->setCrop(Box2i(Vector2i(minX, minY), Vector2i(maxX, maxY)));
+                // Add the crop window to the list
+                addCropButtonCallback(minX, minY, maxX, maxY);
+                // Update the layout
+                updateLayout();
+                // Update the crop list file
+                std::fstream cropListFile(mCropListFilename, std::ios::app);
+                cropListFile << minX << " " << minY << " " << maxX << " " << maxY << std::endl;
+                mCropListContainer->set_scroll(1.f);
+            } catch (const std::exception& e) { std::cerr << "Invalid input: " << e.what() << std::endl; }
+        });
+
+        toggleChildrenVisibilityExceptFirst(panel);
+    }
+
+    // Pixel locator
+    {
+        auto panel = new Widget{mSidebarLayout};
+        panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        auto headerPanel = new Widget{panel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Middle, 5, 0});
+
+        new Label{headerPanel, "Pixel Locator", "sans-bold", 25};
+        mPixelLocatorShowHideButton = createShowHideButton(panel, "Show/Hide pixel locator");
+
+        //
+        auto updateStatusText = [this](const Vector2i& pixelPos, float value, const string& type, const std::string& detail = "") {
+            if (!mStatusLabel || !mCurrentImage) {
+                return;
+            }
+
+            // Get the channels in the current group
+            auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+            if (channels.empty()) {
+                return;
+            }
+
+            std::string channelName = channels[0];
+            if (channels.size() > 1) {
+                channelName = mCurrentGroup;
+            }
+
+            std::string statusText = fmt::format(
+                "{} Value Found\nPixel: ({}, {})\nValue: {:.6f}\nChannel: {}", type, pixelPos.x(), pixelPos.y(), value, channelName
+            );
+
+            if (!detail.empty()) {
+                statusText += "\n" + detail;
+            }
+
+            mStatusLabel->set_caption(statusText);
+            auto preferred_size = mStatusLabel->preferred_size(m_nvg_context);
+            mStatusLabel->set_fixed_width(preferred_size.x());
+            mStatusLabel->set_fixed_height(std::max(20, preferred_size.y()));
+            updateLayout();
+        };
+
+        // Create buttons for different search criteria in a horizontal layout
+        auto searchPanel = new Widget{panel};
+        searchPanel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 3, 1});
+
+        auto findMaxButton = new Button{searchPanel, "Find Max"};
+        findMaxButton->set_font_size(15);
+        findMaxButton->set_tooltip("Find the pixel with the maximum value in the current channel/group");
+        findMaxButton->set_callback([this, updateStatusText]() {
+            if (!mCurrentImage) {
+                return;
+            }
+
+            // Build processing context
+            ChannelProcessContext ctx;
+            if (!buildChannelProcessContext(ctx)) {
+                return;
+            }
+            Vector2i maxPos{0, 0};
+            float maxVal = -numeric_limits<float>::infinity();
+            // Find maximum value across all channels in the current group, within crop region
+            forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                if (val > maxVal) {
+                    maxVal = val;
+                    maxPos = {x, y};
+                }
+            });
+
+            // Focus on the found pixel
+            focusPixel(maxPos);
+            updateStatusText(maxPos, maxVal, "Maximum");
+            mFoundPixels.clear();
+            mCurrentFoundPixelIdx = -1;
+            mLastPixelLocatorRangeQuery.reset();
+            mPixelLocatorRangeHighlights.clear();
+            mPixelLocatorPrimaryHighlight = maxPos;
+            updatePixelLocatorHighlightState(true);
+        });
+
+        auto findMinButton = new Button{searchPanel, "Find Min"};
+        findMinButton->set_font_size(15);
+        findMinButton->set_tooltip("Find the pixel with the minimum value in the current channel/group");
+        findMinButton->set_callback([this, updateStatusText]() {
+            if (!mCurrentImage) {
+                return;
+            }
+
+            // Build processing context
+            ChannelProcessContext ctx;
+            if (!buildChannelProcessContext(ctx)) {
+                return;
+            }
+            Vector2i minPos{0, 0};
+            float minVal = numeric_limits<float>::infinity();
+            // Find minimum value across all channels in the current group
+            forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                if (val < minVal) {
+                    minVal = val;
+                    minPos = {x, y};
+                }
+            });
+
+            // Focus on the found pixel
+            focusPixel(minPos);
+            updateStatusText(minPos, minVal, "Minimum");
+            mFoundPixels.clear();
+            mCurrentFoundPixelIdx = -1;
+            mLastPixelLocatorRangeQuery.reset();
+            mPixelLocatorRangeHighlights.clear();
+            mPixelLocatorPrimaryHighlight = minPos;
+            updatePixelLocatorHighlightState(true);
+        });
+
+        // Range search - more compact layout with labels inline
+        auto rangePanel = new Widget{panel};
+        rangePanel->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Middle, 2, 1});
+
+        // First row: labels and inputs side by side
+        new Label{rangePanel, "Min:", "sans", 15};
+        mRangeMinTextBox = new TextBox{rangePanel};
+        mRangeMinTextBox->set_editable(true);
+        mRangeMinTextBox->set_value("0.0");
+        mRangeMinTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mRangeMinTextBox->set_font_size(15);
+        mRangeMinTextBox->set_fixed_width(55);
+
+        new Label{rangePanel, "Max:", "sans", 15};
+        mRangeMaxTextBox = new TextBox{rangePanel};
+        mRangeMaxTextBox->set_editable(true);
+        mRangeMaxTextBox->set_value("1.0");
+        mRangeMaxTextBox->set_format("[-]?[0-9]*\\.?[0-9]*");
+        mRangeMaxTextBox->set_font_size(15);
+        mRangeMaxTextBox->set_fixed_width(55);
+
+        // Second row: Search buttons
+        auto rangeButtonPanel = new Widget{panel};
+        rangeButtonPanel->set_layout(new GridLayout{Orientation::Horizontal, 3, Alignment::Fill, 3, 1});
+
+        mFindPrevRangeButton = new Button{rangeButtonPanel, "Find Prev"};
+        mFindPrevRangeButton->set_font_size(15);
+        mFindPrevRangeButton->set_tooltip("Find the previous pixel with value in the specified range (selects last if none selected)");
+
+        mFindNextRangeButton = new Button{rangeButtonPanel, "Find Next"};
+        mFindNextRangeButton->set_font_size(15);
+        mFindNextRangeButton->set_tooltip("Find the next pixel with value in the specified range (selects first if none selected)");
+
+        mResetPixelLocatorButton = new Button{rangeButtonPanel, "Reset"};
+        mResetPixelLocatorButton->set_font_size(15);
+        mResetPixelLocatorButton->set_tooltip("Clear pixel locator highlights and results");
+        mResetPixelLocatorButton->set_callback([this]() { clearPixelLocatorState(true); });
+
+        // Store found pixels for "Find Prev/Next" functionality
+        mFoundPixels.clear();
+        mCurrentFoundPixelIdx = -1;
+        mLastPixelLocatorRangeQuery.reset();
+
+        auto updateRangeResults = [this]() {
+            if (!mCurrentImage) {
+                return;
+            }
+
+            try {
+                float minVal = std::stof(mRangeMinTextBox->value());
+                float maxVal = std::stof(mRangeMaxTextBox->value());
+
+                // Swap if min > max
+                if (minVal > maxVal) {
+                    std::swap(minVal, maxVal);
+                }
+
+                const auto query = std::make_pair(minVal, maxVal);
+                if (mLastPixelLocatorRangeQuery && *mLastPixelLocatorRangeQuery == query) {
+                    return;
+                }
+
+                // Build processing context
+                ChannelProcessContext ctx;
+                if (!buildChannelProcessContext(ctx)) {
+                    return;
+                }
+
+                mFoundPixels.clear();
+                mCurrentFoundPixelIdx = -1;
+                mLastPixelLocatorRangeQuery = query;
+
+                struct RangeAgg {
+                    nanogui::Vector2i pos{0, 0};
+                    int matchCount = 0;
+                    float minMatchValue = std::numeric_limits<float>::infinity();
+                    float maxMatchValue = -std::numeric_limits<float>::infinity();
+                };
+
+                    // Find all pixels in the given range, per-pixel (not per-channel).
+                std::unordered_map<int64_t, RangeAgg> matches;
+                forEachChannelPixelValue(ctx, [&](int /*ci*/, int x, int y, float val) {
+                    if (val >= minVal && val <= maxVal) {
+                        const int64_t key = (int64_t{y} << 32) | (uint32_t)x;
+                        auto& agg = matches[key];
+                        if (agg.matchCount == 0) {
+                            agg.pos = {x, y};
+                        }
+                        agg.matchCount++;
+                        agg.minMatchValue = std::min(agg.minMatchValue, val);
+                        agg.maxMatchValue = std::max(agg.maxMatchValue, val);
+                    }
+                });
+
+                mFoundPixels.reserve(matches.size());
+                for (const auto& kv : matches) {
+                    const auto& agg = kv.second;
+                    PixelLocatorRangeMatch match;
+                    match.pos = agg.pos;
+                    match.sortValue = agg.maxMatchValue;
+                    match.matchCount = agg.matchCount;
+                    match.minMatchValue = agg.minMatchValue;
+                    match.maxMatchValue = agg.maxMatchValue;
+                    mFoundPixels.emplace_back(match);
+                }
+
+                    // Sort found pixels by value (and position for stability)
+                std::sort(mFoundPixels.begin(), mFoundPixels.end(), [](const PixelLocatorRangeMatch& a, const PixelLocatorRangeMatch& b) {
+                    if (a.sortValue != b.sortValue) {
+                        return a.sortValue < b.sortValue;
+                    }
+                    if (a.pos.y() != b.pos.y()) {
+                        return a.pos.y() < b.pos.y();
+                    }
+                    return a.pos.x() < b.pos.x();
+                });
+
+                if (!mFoundPixels.empty()) {
+                    mPixelLocatorRangeHighlights.clear();
+                    mPixelLocatorRangeHighlights.reserve(mFoundPixels.size());
+                    for (const auto& entry : mFoundPixels) {
+                        mPixelLocatorRangeHighlights.push_back(entry.pos);
+                    }
+                    mPixelLocatorPrimaryHighlight.reset();
+                    updatePixelLocatorHighlightState(true);
+                } else {
+                    mStatusLabel->set_caption("No pixels found in the specified range");
+                    mPixelLocatorRangeHighlights.clear();
+                    mPixelLocatorPrimaryHighlight.reset();
+                    updatePixelLocatorHighlightState(true);
+                }
+            } catch (const std::exception& e) { mStatusLabel->set_caption(fmt::format("Error: {}", e.what())); }
+        };
+
+        auto selectFoundPixelByIndex = [this, updateStatusText](int idx) {
+            if (idx < 0 || idx >= (int)mFoundPixels.size()) {
+                return;
+            }
+            mCurrentFoundPixelIdx = idx;
+            mPixelLocatorPrimaryHighlight = mFoundPixels[mCurrentFoundPixelIdx].pos;
+            focusPixel(mFoundPixels[mCurrentFoundPixelIdx].pos);
+
+            std::string detail;
+            if (mCurrentImage) {
+                auto channels = mCurrentImage->channelsInGroup(mCurrentGroup);
+                if (channels.size() > 1) {
+                    detail = fmt::format(
+                        "{} channel(s) in range\nMin in-range: {:.6f}\nMax in-range: {:.6f}",
+                        mFoundPixels[mCurrentFoundPixelIdx].matchCount,
+                        mFoundPixels[mCurrentFoundPixelIdx].minMatchValue,
+                        mFoundPixels[mCurrentFoundPixelIdx].maxMatchValue
+                    );
+                }
+            }
+            updateStatusText(
+                mFoundPixels[mCurrentFoundPixelIdx].pos,
+                mFoundPixels[mCurrentFoundPixelIdx].sortValue,
+                "Range",
+                (detail.empty() ? fmt::format("{} of {}", mCurrentFoundPixelIdx + 1, mFoundPixels.size()) :
+                                  fmt::format("{} of {}\n{}", mCurrentFoundPixelIdx + 1, mFoundPixels.size(), detail))
+            );
+            updatePixelLocatorHighlightState(true);
+        };
+
+        mFindPrevRangeButton->set_callback([this, updateRangeResults, selectFoundPixelByIndex]() {
+            updateRangeResults();
+            if (mFoundPixels.empty()) {
+                return;
+            }
+
+            if (mCurrentFoundPixelIdx < 0) {
+                selectFoundPixelByIndex((int)mFoundPixels.size() - 1);
+                return;
+            }
+
+            const int prevIdx = (mCurrentFoundPixelIdx - 1 + (int)mFoundPixels.size()) % (int)mFoundPixels.size();
+            selectFoundPixelByIndex(prevIdx);
+        });
+
+        mFindNextRangeButton->set_callback([this, updateRangeResults, selectFoundPixelByIndex]() {
+            updateRangeResults();
+            if (mFoundPixels.empty()) {
+                return;
+            }
+
+            if (mCurrentFoundPixelIdx < 0) {
+                selectFoundPixelByIndex(0);
+                return;
+            }
+
+            const int nextIdx = (mCurrentFoundPixelIdx + 1) % (int)mFoundPixels.size();
+            selectFoundPixelByIndex(nextIdx);
+        });
+
+        // Status label to show results - reduced height
+        mStatusLabel = new Label{panel, "", "sans", 15};
+        mStatusLabel->set_font_size(15);
+
+        // Add a tooltip to the entire section
+        panel->set_tooltip("Find pixels of interest in the image");
+
+        toggleChildrenVisibilityExceptFirst(panel);
     }
 
     // Image selection
@@ -414,12 +1405,35 @@ ImageViewer::ImageViewer(
             );
         }
 
+        // Histogram scale toggle buttons
+        {
+            auto panel = new Widget{mSidebarLayout};
+            panel->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 5, 2});
+
+            auto makeHistogramScaleButton = [&](string_view caption, EHistogramScale scale) {
+                auto button = new Button{panel, string{caption}};
+                button->set_flags(Button::RadioButton);
+                button->set_font_size(15);
+                button->set_callback([this, scale]() { setHistogramScale(scale); });
+                return button;
+            };
+
+            mHistogramLogButton = makeHistogramScaleButton("Log", EHistogramScale::Log);
+            mHistogramLogButton->set_tooltip("Display histogram using logarithmic bins");
+
+            mHistogramLinearButton = makeHistogramScaleButton("Linear", EHistogramScale::Linear);
+            mHistogramLinearButton->set_tooltip("Display histogram using linearly spaced bins");
+
+            mHistogramLogButton->set_pushed(true);
+        }
+
         // Histogram of selected image
         {
             auto panel = new Widget{mSidebarLayout};
             panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
             mHistogram = new MultiGraph{panel, ""};
+            setHistogramScale(mHistogramScale);
         }
 
         // Fuzzy filter of open images
@@ -642,6 +1656,11 @@ bool ImageViewer::mouse_button_event(const Vector2i& p, int button, bool down, i
                 return true;
             } else if (mImageCanvas->contains(p) && mCurrentImage) {
                 mDragType = glfwGetKey(glfwWindow, GLFW_KEY_C) ? EMouseDragType::ImageCrop : EMouseDragType::ImageDrag;
+
+                if (mDragType == EMouseDragType::ImageCrop) {
+                    mImageCanvas->setCropDragging(true);
+                }
+
                 return true;
             }
         }
@@ -649,9 +1668,13 @@ bool ImageViewer::mouse_button_event(const Vector2i& p, int button, bool down, i
         if (mDragType == EMouseDragType::ImageButtonDrag) {
             requestLayoutUpdate();
         } else if (mDragType == EMouseDragType::ImageCrop) {
+            mImageCanvas->setCropDragging(false);
+
             if (norm(mDraggingStartPosition - p) < CROP_MIN_SIZE) {
                 // If the user did not drag the mouse far enough, we assume that they wanted to reset the crop rather than create a new one.
                 mImageCanvas->setCrop(std::nullopt);
+                mCurrCrop = std::nullopt;
+                requestLayoutUpdate();
             }
         }
 
@@ -720,6 +1743,8 @@ bool ImageViewer::mouse_motion_event_f(const Vector2f& p, const Vector2f& rel, i
 
             // we do not need to worry about min/max ordering here, as setCrop sanitizes the input for us
             mImageCanvas->setCrop(crop);
+            mCurrCrop = crop;
+            requestLayoutUpdate();
 
             break;
         }
@@ -859,7 +1884,7 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
                     reloadImage(mCurrentImage);
                 }
             } else {
-                resetImage();
+                resetImage(false);
             }
             return true;
         } else if (key == GLFW_KEY_X) {
@@ -1206,30 +2231,11 @@ void ImageViewer::draw_contents() {
     updateTitle();
 
     // Update histogram
-    static const string histogramTooltipBase = "Histogram of color values. Adapts to the currently chosen channel group and error metric.";
     auto lazyCanvasStatistics = mImageCanvas->canvasStatistics();
     if (lazyCanvasStatistics) {
         if (lazyCanvasStatistics->isReady()) {
             auto statistics = lazyCanvasStatistics->get();
-            mHistogram->setNChannels(statistics->nChannels);
-            mHistogram->setColors(statistics->histogramColors);
-            mHistogram->setValues(statistics->histogram);
-            mHistogram->setMinimum(statistics->minimum);
-            mHistogram->setMean(statistics->mean);
-            mHistogram->setMaximum(statistics->maximum);
-            mHistogram->setZero(statistics->histogramZero);
-            mHistogram->set_tooltip(
-                fmt::format(
-                    "{}\n\n"
-                    "Minimum: {:.3f}\n"
-                    "Mean: {:.3f}\n"
-                    "Maximum: {:.3f}",
-                    histogramTooltipBase,
-                    statistics->minimum,
-                    statistics->mean,
-                    statistics->maximum
-                )
-            );
+            applyHistogramStatistics(statistics, kHistogramTooltipBase);
         }
     } else {
         mHistogram->setNChannels(1);
@@ -1241,7 +2247,63 @@ void ImageViewer::draw_contents() {
         mHistogram->setMean(0);
         mHistogram->setMaximum(0);
         mHistogram->setZero(0);
-        mHistogram->set_tooltip(fmt::format("{}", histogramTooltipBase));
+        string scaleLabel = mHistogramScale == EHistogramScale::Linear ? "Linear" : "Log";
+        mHistogram->set_tooltip(fmt::format("{}\n\nScale: {}", kHistogramTooltipBase, scaleLabel));
+    }
+}
+
+void ImageViewer::applyHistogramStatistics(const shared_ptr<CanvasStatistics>& statistics, string_view histogramTooltipBase) {
+    if (!mHistogram) {
+        return;
+    }
+
+    bool hasLinearHistogram = !statistics->histogramLinear.empty() && statistics->histogramLinear.size() == statistics->histogram.size();
+    bool useLinear = mHistogramScale == EHistogramScale::Linear && hasLinearHistogram;
+
+    const auto& values = useLinear ? statistics->histogramLinear : statistics->histogram;
+    int zeroBin = useLinear ? statistics->histogramZeroLinear : statistics->histogramZero;
+
+    mHistogram->setNChannels(statistics->nChannels);
+    mHistogram->setColors(statistics->histogramColors);
+    mHistogram->setValues(values);
+    mHistogram->setMinimum(statistics->minimum);
+    mHistogram->setMean(statistics->mean);
+    mHistogram->setMaximum(statistics->maximum);
+    mHistogram->setZero(zeroBin);
+
+    string scaleLabel = useLinear ? "Linear" : "Log";
+    mHistogram->set_tooltip(
+        fmt::format(
+            "{}\n\nScale: {}\n\nMinimum: {:.6f}\nMean: {:.6f}\nMaximum: {:.6f}\nVariance: {:.6f}",
+            histogramTooltipBase,
+            scaleLabel,
+            statistics->minimum,
+            statistics->mean,
+            statistics->maximum,
+            statistics->variance
+        )
+    );
+}
+
+void ImageViewer::setHistogramScale(EHistogramScale scale) {
+    mHistogramScale = scale;
+
+    if (mHistogramLogButton) {
+        mHistogramLogButton->set_pushed(scale == EHistogramScale::Log);
+    }
+    if (mHistogramLinearButton) {
+        mHistogramLinearButton->set_pushed(scale == EHistogramScale::Linear);
+    }
+
+    auto lazyCanvasStatistics = mImageCanvas->canvasStatistics();
+    if (lazyCanvasStatistics && lazyCanvasStatistics->isReady()) {
+        applyHistogramStatistics(lazyCanvasStatistics->get(), kHistogramTooltipBase);
+        return;
+    }
+
+    if (mHistogram) {
+        string scaleLabel = scale == EHistogramScale::Linear ? "Linear" : "Log";
+        mHistogram->set_tooltip(fmt::format("{}\n\nScale: {}", kHistogramTooltipBase, scaleLabel));
     }
 }
 
@@ -1407,6 +2469,9 @@ void ImageViewer::removeImage(shared_ptr<Image> image) {
         // If we're currently dragging the to-be-removed image, stop.
         if ((size_t)id == mDraggedImageButtonId) {
             requestLayoutUpdate();
+            if (mDragType == EMouseDragType::ImageCrop) {
+                mImageCanvas->setCropDragging(false);
+            }
             mDragType = EMouseDragType::None;
         } else if ((size_t)id < mDraggedImageButtonId) {
             --mDraggedImageButtonId;
@@ -1490,8 +2555,20 @@ void ImageViewer::replaceImage(shared_ptr<Image> image, shared_ptr<Image> replac
 
     int referenceId = imageId(mCurrentReference);
 
+    // Clean up old image's tone-mapping settings from the maps
+    mImageExposures.erase(image);
+    mImageOffsets.erase(image);
+    mImageGammas.erase(image);
+
     removeImage(image);
     insertImage(replacement, id, shallSelect);
+
+    // Reset tone-mapping to default values when reloading
+    if (shallSelect && mCurrentImage == replacement) {
+        setExposure(0.0f);
+        setOffset(0.0f);
+        setGamma(2.2f);
+    }
 
     ib = dynamic_cast<ImageButton*>(mImageButtonContainer->children()[id]);
     ib->setCaption(caption);
@@ -1600,6 +2677,7 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 
         mCurrentImage = nullptr;
         mImageCanvas->setImage(nullptr);
+        clearPixelLocatorState(true);
 
         // Clear group buttons
         while (mGroupButtonContainer->child_count() > 0) {
@@ -1626,6 +2704,7 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 
     mCurrentImage = image;
     mImageCanvas->setImage(mCurrentImage);
+    clearPixelLocatorState(true);
 
     setImageWhiteLevel(mCurrentImage->whiteLevel());
 
@@ -1678,6 +2757,24 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
     if (autoFitToScreen()) {
         mImageCanvas->fitImageToScreen(*mCurrentImage);
     }
+    // Set exposure for the selected image
+    float exposure = this->exposure();
+    if (mCurrentImage && mImageExposures.count(mCurrentImage)) {
+        exposure = mImageExposures[mCurrentImage];
+    }
+    setExposure(exposure);
+
+    float offset = this->offset();
+    if (mCurrentImage && mImageOffsets.count(mCurrentImage)) {
+        offset = mImageOffsets[mCurrentImage];
+    }
+    setOffset(offset);
+
+    float gamma = this->gamma();
+    if (mCurrentImage && mImageGammas.count(mCurrentImage)) {
+        gamma = mImageGammas[mCurrentImage];
+    }
+    setGamma(gamma);
 }
 
 void ImageViewer::selectGroup(string group) {
@@ -1769,29 +2866,78 @@ void ImageViewer::selectReference(const shared_ptr<Image>& image) {
     }
 }
 
-void ImageViewer::setExposure(float value) {
-    value = round(value, 1.0f);
-    mExposureSlider->set_value(value);
-    mExposureLabel->set_caption(fmt::format("Exposure: {:+.1f}", value));
+void ImageViewer::setTonemappingValue(ETonemapComponent component, float value) {
+    std::unordered_map<std::shared_ptr<Image>, float>* componentMap = nullptr;
+    std::function<void(float)> canvasSetter = nullptr;
+    nanogui::Slider* slider = nullptr;
+    nanogui::Label* label = nullptr;
 
-    mImageCanvas->setExposure(value);
+    switch (component) {
+        case ETonemapComponent::Exposure:
+            componentMap = &mImageExposures;
+            canvasSetter = [this](float val) { mImageCanvas->setExposure(val); };
+            slider = mExposureSlider;
+            label = mExposureLabel;
+            value = round(value, 1.0f);
+            if (slider) {
+                slider->set_value(value);
+            }
+            if (label) {
+                label->set_caption(fmt::format("Exposure: {:+.1f}", value));
+            }
+            break;
+        case ETonemapComponent::Offset:
+            componentMap = &mImageOffsets;
+            canvasSetter = [this](float val) { mImageCanvas->setOffset(val); };
+            slider = mOffsetSlider;
+            label = mOffsetLabel;
+            value = round(value, 2.0f);
+            if (slider) {
+                slider->set_value(value);
+            }
+            if (label) {
+                label->set_caption(fmt::format("Offset: {:+.2f}", value));
+            }
+            break;
+        case ETonemapComponent::Gamma:
+            componentMap = &mImageGammas;
+            canvasSetter = [this](float val) { mImageCanvas->setGamma(val); };
+            slider = mGammaSlider;
+            label = mGammaLabel;
+            value = round(value, 2.0f);
+            if (slider) {
+                slider->set_value(value);
+            }
+            if (label) {
+                label->set_caption(fmt::format("Gamma: {:+.2f}", value));
+            }
+            break;
+    }
+
+    if (mSyncTonemapping && mSyncTonemapping->checked()) {
+        // If syncing, update this specific component for ALL images.
+        for (const auto& img : mImages) { // Iterate through all loaded images
+            (*componentMap)[img] = value;
+        }
+        // Ensure the current image's map entry is set, especially if mImages was empty or mCurrentImage wasn't in mImages.
+        if (mCurrentImage) {
+            (*componentMap)[mCurrentImage] = value;
+        }
+    } else if (mCurrentImage) {
+        // If not syncing, only update the current image.
+        (*componentMap)[mCurrentImage] = value;
+    }
+
+    if (canvasSetter) {
+        canvasSetter(value);
+    }
 }
 
-void ImageViewer::setOffset(float value) {
-    value = round(value, 2.0f);
-    mOffsetSlider->set_value(value);
-    mOffsetLabel->set_caption(fmt::format("Offset: {:+.2f}", value));
+void ImageViewer::setExposure(float value) { setTonemappingValue(ETonemapComponent::Exposure, value); }
 
-    mImageCanvas->setOffset(value);
-}
+void ImageViewer::setOffset(float value) { setTonemappingValue(ETonemapComponent::Offset, value); }
 
-void ImageViewer::setGamma(float value) {
-    value = round(value, 2.0f);
-    mGammaSlider->set_value(value);
-    mGammaLabel->set_caption(fmt::format("Gamma: {:+.2f}", value));
-
-    mImageCanvas->setGamma(value);
-}
+void ImageViewer::setGamma(float value) { setTonemappingValue(ETonemapComponent::Gamma, value); }
 
 void ImageViewer::normalizeExposureAndOffset() {
     if (!mCurrentImage) {
@@ -1814,11 +2960,18 @@ void ImageViewer::normalizeExposureAndOffset() {
     setOffset(-minimum * factor);
 }
 
-void ImageViewer::resetImage() {
+void ImageViewer::resetImage(bool resetView) {
+    if (mSyncTonemapping->checked()) {
+        mImageExposures.clear();
+        mImageOffsets.clear();
+        mImageGammas.clear();
+    }
     setExposure(0);
     setOffset(0);
     setGamma(2.2f);
-    mImageCanvas->resetTransform();
+    if (resetView) {
+        mImageCanvas->resetTransform();
+    }
 }
 
 void ImageViewer::setTonemap(ETonemap tonemap) {
@@ -2224,10 +3377,16 @@ void ImageViewer::copyImageCanvasToClipboard() const {
         throw std::runtime_error{"Image canvas has no image data to copy to clipboard."};
     }
 
+    auto resizeFunc = [this, imageSize](const HeapArray<float>& data) { return resizeImageArray<float>(data, imageSize.x(), imageSize.y()); };
+
+    int resizedImageWidth = int(imageSize.x() * std::stof(mCopyResizeXTextBox->value()));
+    int resizedImageHeight = int(imageSize.y() * std::stof(mCopyResizeYTextBox->value()));
+
 #if defined(__APPLE__) or defined(_WIN32)
+
     clip::image_spec imageMetadata;
-    imageMetadata.width = imageSize.x();
-    imageMetadata.height = imageSize.y();
+    imageMetadata.width = resizedImageWidth;
+    imageMetadata.height = resizedImageHeight;
     imageMetadata.bits_per_pixel = 32;
     imageMetadata.bytes_per_row = imageMetadata.bits_per_pixel / 8 * imageMetadata.width;
 
@@ -2240,19 +3399,20 @@ void ImageViewer::copyImageCanvasToClipboard() const {
     imageMetadata.blue_shift = 16;
     imageMetadata.alpha_shift = 24;
 
-    const auto imageData = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max());
-    clip::image image(imageData.data(), imageMetadata);
+    const auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
+    clip::image image(imageDataResized.data(), imageMetadata);
 
     if (!clip::set_image(image)) {
         throw std::runtime_error{"clip::set_image failed."};
     }
 #else
-    const auto imageData = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max());
+
+    const auto imageDataResized = mImageCanvas->getLdrImageData(true, std::numeric_limits<int>::max(), resizeFunc);
     const auto pngImageSaver = make_unique<StbiLdrImageSaver>();
 
     stringstream pngData;
     try {
-        pngImageSaver->save(pngData, "clipboard.png", imageData, imageSize, 4);
+        pngImageSaver->save(pngData, "clipboard.png", imageDataResized, Vector2i{resizedImageWidth, resizedImageHeight}, 4);
     } catch (const ImageSaveError& e) {
         throw std::runtime_error{fmt::format("Failed to save image data to clipboard as PNG: {}", e.what())};
     }
@@ -2472,6 +3632,14 @@ void ImageViewer::updateLayout() {
     mImageCanvas->set_fixed_size(m_size - Vector2i{sidebarWidth, footerHeight});
     mSidebar->set_fixed_height(m_size.y() - footerHeight);
 
+    mCropXminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.x() : 0));
+    mCropYminTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->min.y() : 0));
+    mCropXmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() : 0));
+    mCropYmaxTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() : 0));
+
+    mCropWidthTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.x() - mCurrCrop->min.x() : 0));
+    mCropHeightTextBox->set_value(std::to_string(mCurrCrop ? mCurrCrop->max.y() - mCurrCrop->min.y() : 0));
+
     mVerticalScreenSplit->set_fixed_size(m_size);
     mImageScrollContainer->set_fixed_height(m_size.y() - mImageScrollContainer->position().y() - footerHeight);
 
@@ -2494,6 +3662,51 @@ void ImageViewer::updateLayout() {
     double x, y;
     glfwGetCursorPos(m_glfw_window, &x, &y);
     cursor_pos_callback_event(x, y);
+
+    int height = std::min(100, mCropListContainer->preferred_size(m_nvg_context).y());
+    mCropListContainer->set_fixed_height(height);
+    perform_layout();
+}
+
+void ImageViewer::updatePixelLocatorHighlightState(bool forceRefresh) {
+    if (!mImageCanvas) {
+        return;
+    }
+
+    std::vector<nanogui::Vector2i> primaryPixels;
+    if (mPixelLocatorPrimaryHighlight.has_value()) {
+        primaryPixels.push_back(*mPixelLocatorPrimaryHighlight);
+    }
+
+    if (!forceRefresh && primaryPixels.empty() && mPixelLocatorRangeHighlights.empty()) {
+        mImageCanvas->clearPixelLocatorHighlights();
+        return;
+    }
+
+    mImageCanvas->setPixelLocatorHighlights(primaryPixels, mPixelLocatorRangeHighlights);
+}
+
+void ImageViewer::clearPixelLocatorState(bool resetStatusLabel) {
+    mFoundPixels.clear();
+    mCurrentFoundPixelIdx = -1;
+    mLastPixelLocatorRangeQuery.reset();
+    mPixelLocatorRangeHighlights.clear();
+    mPixelLocatorPrimaryHighlight.reset();
+
+    if (mFindPrevRangeButton) {
+        mFindPrevRangeButton->set_enabled(true);
+    }
+    if (mFindNextRangeButton) {
+        mFindNextRangeButton->set_enabled(true);
+    }
+
+    if (resetStatusLabel && mStatusLabel) {
+        mStatusLabel->set_caption("");
+    }
+
+    if (mImageCanvas) {
+        mImageCanvas->clearPixelLocatorHighlights();
+    }
 }
 
 void ImageViewer::updateTitle() {
@@ -2551,20 +3764,66 @@ string ImageViewer::groupName(size_t index) {
     return groups[index].name;
 }
 
+// Extract base layer name from a group name for matching across component types.
+// Examples: "nb000.(R,G,B)" -> "nb000", "nb000L" -> "nb000", "img00.L" -> "img00"
+static string_view extractGroupBaseName(string_view groupName) {
+    // Multi-channel format: "prefix(components)" -> extract prefix
+    if (size_t parenPos = groupName.find('('); parenPos != string::npos) {
+        groupName = groupName.substr(0, parenPos);
+    }
+    // Single-channel with dot: "prefix.X" -> extract up to dot
+    else if (size_t dotPos = groupName.rfind('.'); dotPos != string::npos) {
+        groupName = groupName.substr(0, dotPos + 1);
+    }
+    // Single-channel without dot: try stripping known component suffix
+    else if (!groupName.empty()) {
+        static constexpr string_view components[] = {"R", "G", "B", "A", "X", "Y", "Z", "U", "V", "L",
+                                                     "r", "g", "b", "a", "x", "y", "z", "u", "v", "l"};
+        for (const auto& comp : components) {
+            if (groupName.size() > comp.size() && groupName.ends_with(comp)) {
+                char before = groupName[groupName.size() - comp.size() - 1];
+                if (!isalpha(before)) {
+                    groupName = groupName.substr(0, groupName.size() - comp.size());
+                    break;
+                }
+            }
+        }
+    }
+
+    // Normalize by removing trailing dots
+    while (!groupName.empty() && groupName.back() == '.') {
+        groupName.remove_suffix(1);
+    }
+
+    return groupName;
+}
+
 int ImageViewer::groupId(string_view groupName) const {
     if (!mCurrentImage) {
         return 0;
     }
 
     const auto& groups = mCurrentImage->channelGroups();
-    size_t pos = 0;
-    for (; pos < groups.size(); ++pos) {
-        if (groups[pos].name == groupName) {
-            break;
+
+    // Try exact match first
+    for (size_t i = 0; i < groups.size(); ++i) {
+        if (groups[i].name == groupName) {
+            return (int)i;
         }
     }
 
-    return pos >= groups.size() ? -1 : (int)pos;
+    // Fall back to base name matching to preserve focus when switching between
+    // images with same layer but different components (e.g., "nb000" <-> "nb000.(R,G,B)")
+    string_view requestedBase = extractGroupBaseName(groupName);
+    if (!requestedBase.empty()) {
+        for (size_t i = 0; i < groups.size(); ++i) {
+            if (extractGroupBaseName(groups[i].name) == requestedBase) {
+                return (int)i;
+            }
+        }
+    }
+
+    return -1;
 }
 
 int ImageViewer::imageId(const shared_ptr<Image>& image) const {
@@ -2683,4 +3942,187 @@ void ImageViewer::updateCurrentMonitorSize() {
     }
 }
 
+template <typename T>
+HeapArray<T> ImageViewer::resizeImageArray(const HeapArray<T>& arr, const int inputWidth, const int inputHeight) const {
+    float resizeX = std::stof(mCopyResizeXTextBox->value());
+    float resizeY = std::stof(mCopyResizeYTextBox->value());
+
+    // Ensure valid ratios
+    if (resizeX <= 0 || resizeY <= 0) {
+        throw std::runtime_error("Resize ratio must be greater than zero.");
+    } else if (resizeX == 1 && resizeY == 1) {
+        HeapArray<T> out(arr.size());
+        std::copy(arr.data(), arr.data() + arr.size(), out.data());
+        return out;
+    }
+
+    const int outWidth = static_cast<int>(std::round(inputWidth * resizeX));
+    const int outHeight = static_cast<int>(std::round(inputHeight * resizeY));
+
+    HeapArray<T> out(outWidth * outHeight * 4 /*channel*/);
+
+    if (mClipResizeMode == EClipResizeMode::Nearest) {
+        tlog::info() << "Using nearest neighbor resize";
+        for (int y = 0; y < outHeight; ++y) {
+            for (int x = 0; x < outWidth; ++x) {
+                const int inX = static_cast<int>(x / resizeX);
+                const int inY = static_cast<int>(y / resizeY);
+
+                const int inIndex = (inY * inputWidth + inX) * 4;
+                const int outIndex = (y * outWidth + x) * 4;
+
+                out[outIndex + 0] = arr[inIndex + 0];
+                out[outIndex + 1] = arr[inIndex + 1];
+                out[outIndex + 2] = arr[inIndex + 2];
+                out[outIndex + 3] = arr[inIndex + 3];
+            }
+        }
+    } else if (mClipResizeMode == EClipResizeMode::Bilinear) {
+        tlog::info() << "Using bilinear resize";
+        for (int y = 0; y < outHeight; ++y) {
+            for (int x = 0; x < outWidth; ++x) {
+                const float inX = static_cast<float>(x) / resizeX;
+                const float inY = static_cast<float>(y) / resizeY;
+
+                const int inX0 = static_cast<int>(std::floor(inX));
+                const int inY0 = static_cast<int>(std::floor(inY));
+
+                const int inX1 = std::min(inX0 + 1, inputWidth - 1);
+                const int inY1 = std::min(inY0 + 1, inputHeight - 1);
+
+                const float xRatio = inX - inX0;
+                const float yRatio = inY - inY0;
+
+                if (xRatio < 0 || xRatio > 1 || yRatio < 0 || yRatio > 1) {
+                    tlog::warning() << "Invalid ratio: " << xRatio << ", " << yRatio;
+                }
+
+                const int inIndex00 = (inY0 * inputWidth + inX0) * 4;
+                const int inIndex01 = (inY0 * inputWidth + inX1) * 4;
+                const int inIndex10 = (inY1 * inputWidth + inX0) * 4;
+                const int inIndex11 = (inY1 * inputWidth + inX1) * 4;
+
+                const int outIndex = (y * outWidth + x) * 4;
+
+                for (int c = 0; c < 4; ++c) {
+                    float val00 = (static_cast<float>(arr[inIndex00 + c]));
+                    float val01 = (static_cast<float>(arr[inIndex01 + c]));
+                    float val10 = (static_cast<float>(arr[inIndex10 + c]));
+                    float val11 = (static_cast<float>(arr[inIndex11 + c]));
+
+                    // Interpolating horizontally first
+                    float val0 = val00 * (1 - xRatio) + val01 * xRatio;
+                    float val1 = val10 * (1 - xRatio) + val11 * xRatio;
+
+                    // Then interpolating vertically
+                    float val = val0 * (1 - yRatio) + val1 * yRatio;
+
+                    // Clamp the value between 0 and 255 before casting
+                    val = std::max(0.0f, std::min(1.0f, val));
+
+                    out[outIndex + c] = static_cast<T>((val));
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+void ImageViewer::focusPixel(const nanogui::Vector2i& pixelPos) {
+    if (!mCurrentImage) {
+        return;
+    }
+
+    // Compute offset so that the given pixel's center ends up at the canvas center.
+    Vector2f imageCenter = Vector2f{mCurrentImage->size()} * 0.5f;
+    Vector2f offset = imageCenter - Vector2f{pixelPos} - Vector2f{0.5f};
+
+    // Keep the current zoom level and only adjust the translation.
+    const float pr = mImageCanvas->pixelRatio();
+    const float currentScale = mImageCanvas->scale();
+
+    // Build transform: translate by the required offset at the existing scale, then apply the scale.
+    Matrix3f newTransform = Matrix3f::scale(Vector2f{currentScale});
+    newTransform = Matrix3f::translate(offset / pr * currentScale) * newTransform;
+
+    mImageCanvas->setTransform(newTransform);
+}
+
+void ImageViewer::setSyncExposure(bool sync) {
+    if (mSyncTonemapping) {
+        mSyncTonemapping->set_checked(sync);
+    }
+}
+
+bool ImageViewer::buildChannelProcessContext(ChannelProcessContext& ctx) const {
+    if (!mCurrentImage) {
+        return false;
+    }
+
+    ctx.channelNames = mCurrentImage->channelsInGroup(mCurrentGroup);
+    if (ctx.channelNames.empty()) {
+        return false;
+    }
+
+    ctx.channels = mCurrentImage->channels(ctx.channelNames);
+
+    ctx.hasReference = (bool)mCurrentReference;
+    if (ctx.hasReference) {
+        ctx.referenceChannels = mCurrentReference->channels(ctx.channelNames);
+        ctx.refOffset = (Vector2i{mCurrentReference->size().x(), mCurrentReference->size().y()} - mCurrentImage->size()) / 2;
+    } else {
+        ctx.refOffset = {0, 0};
+    }
+
+    ctx.isAlpha.resize(ctx.channelNames.size());
+    for (size_t i = 0; i < ctx.channelNames.size(); ++i) {
+        ctx.isAlpha[i] = Channel::isAlpha(ctx.channelNames[i]);
+    }
+
+    ctx.size = mCurrentImage->size();
+
+    const Box2i region = mImageCanvas->cropInImageCoords();
+    ctx.minX = 0;
+    ctx.maxX = ctx.size.x();
+    ctx.minY = 0;
+    ctx.maxY = ctx.size.y();
+    if (region.isValid()) {
+        ctx.minX = region.min.x();
+        ctx.maxX = region.max.x();
+        ctx.minY = region.min.y();
+        ctx.maxY = region.max.y();
+    }
+
+    return true;
+}
+
+void ImageViewer::forEachChannelPixelValue(const ChannelProcessContext& ctx, const std::function<void(int ci, int x, int y, float val)>& fn) const {
+    for (size_t ci = 0; ci < ctx.channels.size(); ++ci) {
+        const auto* channel = ctx.channels[ci];
+        const auto* refChan = (ctx.hasReference && ci < ctx.referenceChannels.size()) ? ctx.referenceChannels[ci] : nullptr;
+
+        for (int y = ctx.minY; y < ctx.maxY; ++y) {
+            for (int x = ctx.minX; x < ctx.maxX; ++x) {
+                float val;
+                if (ctx.hasReference) {
+                    if (ctx.isAlpha[ci]) {
+                        val = 0.5f *
+                            (channel->eval({x, y}) + (refChan ? refChan->eval({x + ctx.refOffset.x(), y + ctx.refOffset.y()}) : 1.0f));
+                    } else {
+                        val = ImageCanvas::applyMetric(
+                            channel->eval({x, y}),
+                            refChan ? refChan->eval({x + ctx.refOffset.x(), y + ctx.refOffset.y()}) : 0.0f,
+                            mImageCanvas->metric()
+                        );
+                    }
+                } else {
+                    val = channel->eval({x, y});
+                }
+
+                fn((int)ci, x, y, val);
+            }
+        }
+    }
+}
 } // namespace tev

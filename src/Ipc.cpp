@@ -175,6 +175,18 @@ void IpcPacket::setVectorGraphics(string_view imageName, bool grabFocus, bool ap
     }
 }
 
+void IpcPacket::setExposure(float exposure) {
+    OStream payload{mPayload};
+    payload << EType::ExposureControl;
+    payload << exposure;
+}
+
+void IpcPacket::setSyncExposure(bool sync) {
+    OStream payload{mPayload};
+    payload << EType::SyncExposureControl;
+    payload << sync;
+}
+
 IpcPacketOpenImage IpcPacket::interpretAsOpenImage() const {
     IpcPacketOpenImage result;
     IStream payload{mPayload};
@@ -352,6 +364,30 @@ IpcPacketVectorGraphics IpcPacket::interpretAsVectorGraphics() const {
     }
 
     return result;
+}
+
+float IpcPacket::interpretAsExposure() const {
+    IStream payload{mPayload};
+    EType type;
+    payload >> type;
+    if (type != EType::ExposureControl) {
+        throw std::runtime_error{"Cannot interpret IPC packet as ExposureControl."};
+    }
+    float exposure;
+    payload >> exposure;
+    return exposure;
+}
+
+bool IpcPacket::interpretAsSyncExposure() const {
+    IStream payload{mPayload};
+    EType type;
+    payload >> type;
+    if (type != EType::SyncExposureControl) {
+        throw std::runtime_error{"Cannot interpret IPC packet as SyncExposureControl."};
+    }
+    bool sync;
+    payload >> sync;
+    return sync;
 }
 
 static void makeSocketNonBlocking(Ipc::socket_t socketFd) {

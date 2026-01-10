@@ -27,6 +27,7 @@
 #include <nanogui/theme.h>
 #include <nanogui/vector.h>
 
+#include <algorithm>
 #include <fstream>
 #include <set>
 #include <span>
@@ -35,6 +36,15 @@ using namespace nanogui;
 using namespace std;
 
 namespace tev {
+
+namespace {
+constexpr float kPixelLocatorSingleBaseBorderThickness = 10.f;
+constexpr float kPixelLocatorSingleMinBorderThickness = 0.01f;
+constexpr float kPixelLocatorSingleMaxBorderThickness = 0.45f;
+constexpr float kPixelLocatorRangeBorderThickness = 0.05f;
+constexpr float kPixelLocatorRangeFillOpacity = 0.0f;
+constexpr float kPixelLocatorPrimaryFillOpacity = 0.0f;
+} // namespace
 
 ImageCanvas::ImageCanvas(Widget* parent) : Canvas{parent, 1, false, false, false} {
     // If we are rendering to a float buffer (which is the case if the screen has a float back buffer, or if the screen performs color
@@ -47,6 +57,14 @@ ImageCanvas::ImageCanvas(Widget* parent) : Canvas{parent, 1, false, false, false
 
     mShader.reset(new UberShader{render_pass(), ditherScale});
     set_draw_border(false);
+}
+
+void ImageCanvas::setImage(shared_ptr<Image> image) {
+    bool changed = mImage != image;
+    mImage = image;
+    if (changed) {
+        clearPixelLocatorHighlights();
+    }
 }
 
 bool ImageCanvas::scroll_event(const Vector2i& p, const Vector2f& rel) {
@@ -88,6 +106,23 @@ void ImageCanvas::draw_contents() {
 
     Image* reference = (viewImageOnly || !mReference || image == mReference.get()) ? nullptr : mReference.get();
 
+    // Use an adaptive border only when highlighting a single pixel; range highlights keep a fixed thickness.
+    float pixelLocatorBorderThickness = kPixelLocatorRangeBorderThickness;
+    if (mPixelLocatorUseAdaptiveBorder) {
+        float currentScale = std::max(1e-4f, this->scale());
+        pixelLocatorBorderThickness = kPixelLocatorSingleBaseBorderThickness / currentScale;
+        pixelLocatorBorderThickness =
+            std::clamp(pixelLocatorBorderThickness, kPixelLocatorSingleMinBorderThickness, kPixelLocatorSingleMaxBorderThickness);
+    }
+
+    if (mHasPixelLocatorHighlights && mImage) {
+        ensurePixelLocatorTexture(mImage->size());
+        if (mPixelLocatorHighlightTexture && !mPixelLocatorHighlightMask.empty() && mPixelLocatorHighlightsDirty) {
+            mPixelLocatorHighlightTexture->upload(mPixelLocatorHighlightMask.data());
+            mPixelLocatorHighlightsDirty = false;
+        }
+    }
+
     mShader->draw(
         2.0f * inverse(Vector2f{m_size}) / mPixelRatio,
         Vector2f{20.0f},
@@ -108,7 +143,13 @@ void ImageCanvas::draw_contents() {
         mBackgroundColor,
         mTonemap,
         mMetric,
-        imageSpaceCrop
+        imageSpaceCrop,
+        (mHasPixelLocatorHighlights && mPixelLocatorHighlightTexture) ? mPixelLocatorHighlightTexture.get() : nullptr,
+        PIXEL_LOCATOR_RANGE_COLOR,
+        PIXEL_LOCATOR_PRIMARY_COLOR,
+        kPixelLocatorRangeFillOpacity,
+        kPixelLocatorPrimaryFillOpacity,
+        pixelLocatorBorderThickness
     );
 }
 
@@ -359,6 +400,76 @@ void ImageCanvas::drawEdgeShadows(NVGcontext* ctx) {
     nvgFillPaint(ctx, shadowPaint);
     nvgFill(ctx);
     nvgRestore(ctx);
+}
+
+void ImageCanvas::ensurePixelLocatorTexture(const Vector2i& size) {
+    if (!mPixelLocatorHighlightTexture || mPixelLocatorHighlightTexture->size() != size) {
+        mPixelLocatorHighlightTexture = new Texture{
+            Texture::PixelFormat::RA,
+            Texture::ComponentFormat::UInt8,
+            size,
+            Texture::InterpolationMode::Nearest,
+            Texture::InterpolationMode::Nearest,
+            Texture::WrapMode::ClampToEdge
+        };
+    }
+}
+
+void ImageCanvas::setPixelLocatorHighlights(span<const Vector2i> primaryPixels, span<const Vector2i> rangePixels) {
+    if (!mImage || (primaryPixels.empty() && rangePixels.empty())) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    Vector2i size = mImage->size();
+    if (size.x() <= 0 || size.y() <= 0) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    ensurePixelLocatorTexture(size);
+
+    const size_t pixels = (size_t)size.x() * size.y();
+    mPixelLocatorHighlightMask.assign(pixels * 2, 0);
+
+    auto markPixel = [&](const Vector2i& p, size_t channel) {
+        if (p.x() < 0 || p.y() < 0 || p.x() >= size.x() || p.y() >= size.y()) {
+            return false;
+        }
+        size_t idx = ((size_t)p.y() * size.x() + p.x()) * 2 + channel;
+        mPixelLocatorHighlightMask[idx] = 255;
+        return true;
+    };
+
+    bool hasRange = false;
+    for (const auto& pos : rangePixels) {
+        hasRange |= markPixel(pos, 0);
+    }
+
+    bool hasPrimary = false;
+    for (const auto& pos : primaryPixels) {
+        hasPrimary |= markPixel(pos, 1);
+    }
+
+    if (!hasRange && !hasPrimary) {
+        clearPixelLocatorHighlights();
+        return;
+    }
+
+    mPixelLocatorUseAdaptiveBorder = rangePixels.empty();
+
+    mHasPixelLocatorHighlights = true;
+    mPixelLocatorHighlightsDirty = true;
+    redrawWindow();
+}
+
+void ImageCanvas::clearPixelLocatorHighlights() {
+    mPixelLocatorHighlightMask.clear();
+    mPixelLocatorHighlightTexture = nullptr;
+    mPixelLocatorHighlightsDirty = false;
+    mHasPixelLocatorHighlights = false;
+    mPixelLocatorUseAdaptiveBorder = false;
+    redrawWindow();
 }
 
 void ImageCanvas::draw(NVGcontext* ctx) {
@@ -619,6 +730,7 @@ float ImageCanvas::applyMetric(float image, float reference, EMetric metric) {
         case EMetric::SquaredError: return diff * diff;
         case EMetric::RelativeAbsoluteError: return abs(diff) / (reference + 0.01f);
         case EMetric::RelativeSquaredError: return diff * diff / (reference * reference + 0.01f);
+        case EMetric::SMAPE: return abs(diff) / (abs(image) + abs(reference) + 0.01f);
         default: throw runtime_error{"Invalid metric selected."};
     }
 }
@@ -704,9 +816,14 @@ HeapArray<float> ImageCanvas::getHdrImageData(bool divideAlpha, int priority) co
     return result;
 }
 
-HeapArray<char> ImageCanvas::getLdrImageData(bool divideAlpha, int priority) const {
+HeapArray<char> ImageCanvas::getLdrImageData(
+    bool divideAlpha, int priority, const std::function<HeapArray<float>(const HeapArray<float>&)>& processHdr
+) const {
     // getHdrImageData always returns four floats per pixel (RGBA).
-    const auto floatData = getHdrImageData(divideAlpha, priority);
+    auto floatData = getHdrImageData(divideAlpha, priority);
+    if (processHdr) {
+        floatData = processHdr(floatData);
+    }
     HeapArray<char> result(floatData.size());
 
     ThreadPool::global().parallelFor<size_t>(
@@ -782,6 +899,10 @@ void ImageCanvas::saveImage(const fs::path& path) const {
 
 shared_ptr<Lazy<shared_ptr<CanvasStatistics>>> ImageCanvas::canvasStatistics() {
     if (!mImage) {
+        return nullptr;
+    }
+
+    if (mCropDragging) {
         return nullptr;
     }
 
@@ -944,6 +1065,7 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     const size_t nChannels = result->nChannels = (int)(alphaChannel ? (flattened.size() - 1) : flattened.size());
     result->histogramColors.resize(nChannels);
 
+    // calculate mean, maximum, and minimum
     for (size_t i = 0; i < nChannels; ++i) {
         string rgba[] = {"R", "G", "B", "A"};
         string colorName = nChannels == 1 ? "L" : rgba[std::min(i, (size_t)3)];
@@ -970,9 +1092,30 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
     result->maximum = maximum;
     result->minimum = minimum;
 
+    // calculate variance using the computed mean
+    double varianceSum = 0;
+    for (size_t i = 0; i < nChannels; ++i) {
+        const auto& channel = flattened[i];
+        for (int y = region.min.y(); y < region.max.y(); ++y) {
+            for (int x = region.min.x(); x < region.max.x(); ++x) {
+                auto v = channel.at({x, y});
+                if (!isfinite(v)) {
+                    continue;
+                }
+
+                double diff = v - result->mean;
+                varianceSum += diff * diff;
+            }
+        }
+    }
+
+    // Sample variance
+    result->variance = totalNumPixels > 1 ? (float)(varianceSum / (totalNumPixels - 1)) : 0;
+
     // Now that we know the maximum and minimum value we can define our histogram bin size.
     static const size_t NUM_BINS = 400;
     result->histogram.resize(NUM_BINS * nChannels);
+    result->histogramLinear.resize(NUM_BINS * nChannels);
 
     // We're going to draw our histogram in log space.
     static const float addition = 0.001f;
@@ -994,6 +1137,16 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
 
     const auto binToVal = [&](const float val) { return symmetricLogInverse((diffLog * val / NUM_BINS) + minLog); };
 
+    float linearRange = maximum - minimum;
+    auto valToBinLinear = [&](float val) {
+        if (linearRange <= 0.0f) {
+            return 0;
+        }
+        return clamp((int)(NUM_BINS * (val - minimum) / linearRange), 0, (int)NUM_BINS - 1);
+    };
+
+    result->histogramZeroLinear = valToBinLinear(0);
+
     // In the strange case that we have 0 channels, early return, because the histogram makes no sense.
     if (nChannels == 0) {
         co_return result;
@@ -1001,7 +1154,8 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
 
     const auto regionSize = region.size();
     const size_t numPixels = region.area();
-    HeapArray<int> indices(numPixels * nChannels);
+    HeapArray<int> logIndices(numPixels * nChannels);
+    HeapArray<int> linearIndices(numPixels * nChannels);
 
     vector<Task<void>> tasks;
     tasks.emplace_back(
@@ -1013,7 +1167,9 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
                 int y = (int)(j / regionSize.x()) + region.min.y();
                 for (size_t c = 0; c < nChannels; ++c) {
                     const auto& channel = flattened[c];
-                    indices[j * nChannels + c] = valToBin(channel.at({x, y}));
+                    auto value = channel.at({x, y});
+                    logIndices[j * nChannels + c] = valToBin(value);
+                    linearIndices[j * nChannels + c] = valToBinLinear(value);
                 }
             },
             priority
@@ -1028,7 +1184,9 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
             for (size_t j = 0; j < numPixels; ++j) {
                 int x = (int)(j % regionSize.x()) + region.min.x();
                 int y = (int)(j / regionSize.x()) + region.min.y();
-                result->histogram[indices[j * nChannels + c] + c * NUM_BINS] += alphaChannel ? alphaChannel->at({x, y}) : 1;
+                float weight = alphaChannel ? alphaChannel->at({x, y}) : 1.0f;
+                result->histogram[logIndices[j * nChannels + c] + c * NUM_BINS] += weight;
+                result->histogramLinear[linearIndices[j * nChannels + c] + c * NUM_BINS] += weight;
             }
         },
         priority
@@ -1036,21 +1194,41 @@ Task<shared_ptr<CanvasStatistics>> ImageCanvas::computeCanvasStatistics(
 
     for (size_t i = 0; i < nChannels; ++i) {
         for (size_t j = 0; j < NUM_BINS; ++j) {
-            result->histogram[j + i * NUM_BINS] /= binToVal(j + 1) - binToVal(j);
+            float binWidthLog = binToVal(j + 1) - binToVal(j);
+            if (binWidthLog != 0.0f) {
+                result->histogram[j + i * NUM_BINS] /= binWidthLog;
+            }
+        }
+
+        float binWidthLinear = linearRange <= 0.0f ? 1.0f : linearRange / NUM_BINS;
+        if (binWidthLinear == 0.0f) {
+            binWidthLinear = 1.0f;
+        }
+        for (size_t j = 0; j < NUM_BINS; ++j) {
+            result->histogramLinear[j + i * NUM_BINS] /= binWidthLinear;
         }
     }
 
     // Normalize the histogram according to the 10th-largest element to avoid a couple spikes ruining the entire graph.
-    auto tmp = result->histogram;
-    const size_t idx = tmp.size() - 10;
-    nth_element(tmp.data(), tmp.data() + idx, tmp.data() + tmp.size());
-
-    const float norm = 1.0f / (std::max(tmp[idx], 0.1f) * 1.3f);
-    for (size_t i = 0; i < nChannels; ++i) {
-        for (size_t j = 0; j < NUM_BINS; ++j) {
-            result->histogram[j + i * NUM_BINS] *= norm;
+    auto normalizeHistogram = [&](std::vector<float>& histogram) {
+        if (histogram.empty()) {
+            return;
         }
-    }
+
+        auto tmp = histogram;
+        size_t idx = tmp.size() > 10 ? tmp.size() - 10 : tmp.size() - 1;
+        nth_element(tmp.begin(), tmp.begin() + idx, tmp.end());
+        const float norm = 1.0f / (std::max(tmp[idx], 0.1f) * 1.3f);
+
+        for (size_t i = 0; i < nChannels; ++i) {
+            for (size_t j = 0; j < NUM_BINS; ++j) {
+                result->histogram[j + i * NUM_BINS] *= norm;
+            }
+        }
+    };
+
+    normalizeHistogram(result->histogram);
+    normalizeHistogram(result->histogramLinear);
 
     co_return result;
 }

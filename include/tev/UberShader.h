@@ -53,7 +53,13 @@ public:
         const nanogui::Color& backgroundColor,
         ETonemap tonemap,
         EMetric metric,
-        const std::optional<Box2i>& crop
+        const std::optional<Box2i>& crop,
+        nanogui::Texture* pixelLocatorTexture,
+        const nanogui::Color& pixelLocatorRangeColor,
+        const nanogui::Color& pixelLocatorPrimaryColor,
+        float pixelLocatorRangeFillOpacity,
+        float pixelLocatorPrimaryFillOpacity,
+        float pixelLocatorBorderThickness
     );
 
 private:
@@ -64,6 +70,15 @@ private:
     );
 
     void bindReferenceData(nanogui::Texture* textureReference, const nanogui::Matrix3f& transformReference, EMetric metric);
+    void bindPixelLocatorData(
+        nanogui::Texture* texturePixelLocator,
+        const nanogui::Vector2f& texelSize,
+        const nanogui::Color& rangeColor,
+        const nanogui::Color& primaryColor,
+        float rangeFillOpacity,
+        float primaryFillOpacity,
+        float borderThickness
+    );
 
     nanogui::ref<nanogui::Shader> mShader;
     nanogui::ref<nanogui::Texture> mColorMap;

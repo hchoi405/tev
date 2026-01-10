@@ -463,6 +463,8 @@ EMetric toMetric(string_view name) {
         return EMetric::RelativeAbsoluteError;
     } else if (upperName == "RSE") {
         return EMetric::RelativeSquaredError;
+    } else if (upperName == "SMAPE") {
+        return EMetric::SMAPE;
     } else {
         return EMetric::Error;
     }

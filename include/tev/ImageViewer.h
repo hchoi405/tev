@@ -34,14 +34,19 @@
 #include <nanogui/screen.h>
 #include <nanogui/slider.h>
 #include <nanogui/textbox.h>
+#include <nanogui/checkbox.h>
 
 #include <chrono>
 #include <memory>
 #include <optional>
 #include <set>
 #include <vector>
+#include <unordered_map>
+#include <functional>
 
 namespace tev {
+
+enum class ETonemapComponent { Exposure, Offset, Gamma };
 
 class ImageViewer : public nanogui::Screen {
 public:
@@ -116,7 +121,7 @@ public:
 
     void normalizeExposureAndOffset();
 
-    void resetImage();
+    void resetImage(bool resetView = true);
 
     EInterpolationMode minFilter() const { return mImageCanvas->minFilter(); }
     void setMinFilter(EInterpolationMode value) { mImageCanvas->setMinFilter(value); }
@@ -194,11 +199,36 @@ public:
     void pasteImagesFromClipboard();
 
     void showErrorDialog(std::string_view message);
+    void focusPixel(const nanogui::Vector2i& pixelPos);
+
+    void setSyncExposure(bool sync);
 
 private:
     void updateFilter();
+    void applyHistogramStatistics(const std::shared_ptr<CanvasStatistics>& statistics, std::string_view histogramTooltipBase);
+    enum class EHistogramScale {
+        Log,
+        Linear,
+    };
+    void setHistogramScale(EHistogramScale scale);
+
+    struct ChannelProcessContext {
+        std::vector<std::string> channelNames;
+        std::vector<const Channel*> channels;
+        std::vector<const Channel*> referenceChannels;
+        std::vector<bool> isAlpha;
+        nanogui::Vector2i size;
+        nanogui::Vector2i refOffset{0, 0};
+        int minX = 0, maxX = 0, minY = 0, maxY = 0;
+        bool hasReference = false;
+    };
+
+    bool buildChannelProcessContext(ChannelProcessContext& ctx) const;
+    void forEachChannelPixelValue(const ChannelProcessContext& ctx, const std::function<void(int ci, int x, int y, float val)>& fn) const;
     void updateLayout();
     void updateTitle();
+    void updatePixelLocatorHighlightState(bool forceRefresh = false);
+    void clearPixelLocatorState(bool resetStatusLabel);
     std::string groupName(size_t index);
 
     int groupId(std::string_view groupName) const;
@@ -248,6 +278,23 @@ private:
     nanogui::Widget* mTonemapButtonContainer = nullptr;
     nanogui::Widget* mMetricButtonContainer = nullptr;
 
+    // Crop
+    nanogui::Button* mCropShowHideButton;
+    nanogui::TextBox* mCropXminTextBox;
+    nanogui::TextBox* mCropYminTextBox;
+    nanogui::TextBox* mCropXmaxTextBox;
+    nanogui::TextBox* mCropYmaxTextBox;
+    nanogui::TextBox* mCropWidthTextBox;
+    nanogui::TextBox* mCropHeightTextBox;
+    std::string mCropListFilename = "cropList.txt";
+    nanogui::TextBox* mCropListPathTextBox = nullptr;
+    std::fstream mCropListFile;
+    nanogui::VScrollPanel* mCropListContainer;
+
+    // Flags to prevent update loops between the two sets of text boxes
+    bool mUpdatingFromMinMax = false;
+    bool mUpdatingFromSizeFields = false;
+
     std::shared_ptr<BackgroundImagesLoader> mImagesLoader;
     std::weak_ptr<Ipc> mIpc;
 
@@ -288,8 +335,16 @@ private:
     nanogui::Widget* mGroupButtonContainer = nullptr;
     std::string mCurrentGroup;
 
+    nanogui::Button* mHistogramLogButton = nullptr;
+    nanogui::Button* mHistogramLinearButton = nullptr;
+    EHistogramScale mHistogramScale = EHistogramScale::Log;
+
     HelpWindow* mHelpWindow = nullptr;
 
+    std::optional<Box2i> mCurrCrop = Box2i{
+        {0, 0},
+        {0, 0}
+    };
     enum class EMouseDragType {
         None,
         ImageDrag,
@@ -336,6 +391,47 @@ private:
     bool mMaximizedUnreliable = false;
 
     std::unique_ptr<std::thread> mFileDialogThread;
+
+    // Clipboard size modifier
+    nanogui::Button* mCopyResizeShowHideButton;
+    nanogui::TextBox* mCopyResizeXTextBox;
+    nanogui::TextBox* mCopyResizeYTextBox;
+    enum class EClipResizeMode {
+        Nearest,
+        Bilinear,
+    };
+    EClipResizeMode mClipResizeMode = EClipResizeMode::Nearest;
+    template <typename T> HeapArray<T> resizeImageArray(const HeapArray<T>& arr, const int inputWidth, const int inputHeight) const;
+
+    // Pixel locator
+    nanogui::Button* mPixelLocatorShowHideButton = nullptr;
+    nanogui::TextBox* mRangeMinTextBox = nullptr;
+    nanogui::TextBox* mRangeMaxTextBox = nullptr;
+    nanogui::Button* mFindPrevRangeButton = nullptr;
+    nanogui::Button* mFindNextRangeButton = nullptr;
+    nanogui::Button* mResetPixelLocatorButton = nullptr;
+    nanogui::Label* mStatusLabel = nullptr;
+    struct PixelLocatorRangeMatch {
+        nanogui::Vector2i pos;
+        float sortValue = 0.0f;
+        int matchCount = 0;
+        float minMatchValue = 0.0f;
+        float maxMatchValue = 0.0f;
+    };
+    std::vector<PixelLocatorRangeMatch> mFoundPixels;
+    int mCurrentFoundPixelIdx = -1;
+    std::optional<std::pair<float, float>> mLastPixelLocatorRangeQuery;
+    std::vector<nanogui::Vector2i> mPixelLocatorRangeHighlights;
+    std::optional<nanogui::Vector2i> mPixelLocatorPrimaryHighlight;
+
+    // Tonemapping
+    std::unordered_map<std::shared_ptr<Image>, float> mImageExposures;
+    std::unordered_map<std::shared_ptr<Image>, float> mImageOffsets;
+    std::unordered_map<std::shared_ptr<Image>, float> mImageGammas;
+
+    nanogui::CheckBox* mSyncTonemapping = nullptr;
+
+    void setTonemappingValue(ETonemapComponent component, float value);
 };
 
 } // namespace tev
