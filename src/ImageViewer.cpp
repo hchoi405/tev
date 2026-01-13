@@ -2757,20 +2757,22 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
     if (autoFitToScreen()) {
         mImageCanvas->fitImageToScreen(*mCurrentImage);
     }
-    // Set exposure for the selected image
-    float exposure = this->exposure();
+    const bool syncTonemapping = mSyncTonemapping && mSyncTonemapping->checked();
+
+    // Set tone-mapping values for the selected image.
+    float exposure = syncTonemapping ? this->exposure() : 0.0f;
     if (mCurrentImage && mImageExposures.count(mCurrentImage)) {
         exposure = mImageExposures[mCurrentImage];
     }
     setExposure(exposure);
 
-    float offset = this->offset();
+    float offset = syncTonemapping ? this->offset() : 0.0f;
     if (mCurrentImage && mImageOffsets.count(mCurrentImage)) {
         offset = mImageOffsets[mCurrentImage];
     }
     setOffset(offset);
 
-    float gamma = this->gamma();
+    float gamma = syncTonemapping ? this->gamma() : 2.2f;
     if (mCurrentImage && mImageGammas.count(mCurrentImage)) {
         gamma = mImageGammas[mCurrentImage];
     }
