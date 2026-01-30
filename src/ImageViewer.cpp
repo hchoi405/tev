@@ -134,15 +134,45 @@ ImageViewer::ImageViewer(
     mImageCanvas = new ImageCanvas{horizontalScreenSplit};
     mImageCanvas->setPixelRatio(pixel_ratio());
 
+    auto toggleChildrenVisibilityExceptFirst = [](Widget* parentPanel) {
+        // Hide all children except the first one (which is the header panel)
+        for (auto& child : parentPanel->children()) {
+            if (child != parentPanel->children().front()) {
+                child->set_visible(!child->visible());
+            }
+        }
+    };
+
+    // Helper for creating a show/hide button for panels
+    auto createShowHideButton = [this, toggleChildrenVisibilityExceptFirst](Widget* parentPanel, const string& tooltip) -> Button* {
+        // Assume the first child is the header panel
+        auto headerPanel = parentPanel->children().front();
+
+        auto button = new Button{headerPanel, "", FA_EYE};
+        button->set_font_size(15);
+        button->set_flags(Button::ToggleButton);
+        button->set_pushed(false);
+        button->set_tooltip(tooltip);
+        button->set_change_callback([this, parentPanel, toggleChildrenVisibilityExceptFirst](bool) {
+            toggleChildrenVisibilityExceptFirst(parentPanel);
+            updateLayout();
+        });
+        return button;
+    };
+
     // Tonemapping section
     {
-        auto panel = new Widget{mSidebarLayout};
-        panel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
-        new Label{panel, "Tonemapping", "sans-bold", 25};
-        panel->set_tooltip("Various tonemapping options. Hover the individual controls to learn more!");
+        auto tonemapPanel = new Widget{mSidebarLayout};
+        tonemapPanel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
+
+        auto headerPanel = new Widget{tonemapPanel};
+        headerPanel->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
+        new Label{headerPanel, "Tonemapping", "sans-bold", 25};
+        createShowHideButton(tonemapPanel, "Show/Hide tonemapping options");
+        headerPanel->set_tooltip("Various tonemapping options. Hover the individual controls to learn more!");
 
         // Checkbox for syncing tonemapping values
-        auto row = new Widget{panel};
+        auto row = new Widget{tonemapPanel};
         row->set_layout(new BoxLayout{Orientation::Horizontal, Alignment::Fill, 5});
         mSyncTonemapping = new CheckBox{row, "Sync"};
         mSyncTonemapping->set_font_size(15);
@@ -187,7 +217,7 @@ ImageViewer::ImageViewer(
 
         // Exposure label and slider
         {
-            panel = new Widget{mSidebarLayout};
+            auto panel = new Widget{tonemapPanel};
             panel->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 5});
 
             mExposureLabel = new Label{panel, "", "sans-bold", 15};
@@ -205,7 +235,7 @@ ImageViewer::ImageViewer(
 
         // Offset/Gamma label and slider
         {
-            panel = new Widget{mSidebarLayout};
+            auto panel = new Widget{tonemapPanel};
             panel->set_layout(new GridLayout{Orientation::Vertical, 2, Alignment::Fill, 5, 0});
 
             mOffsetLabel = new Label{panel, "", "sans-bold", 15};
@@ -229,270 +259,244 @@ ImageViewer::ImageViewer(
                 "Keyboard shortcuts: G and Shift+G\n\n"
             );
         }
-    }
 
-    // Exposure/offset buttons
-    {
-        auto buttonContainer = new Widget{mSidebarLayout};
-        buttonContainer->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 5, 2});
-
-        auto makeButton = [&](string_view name, function<void()> callback, int icon = 0, string_view tooltip = "") {
-            auto button = new Button{buttonContainer, name, icon};
-            button->set_font_size(15);
-            button->set_callback(callback);
-            button->set_tooltip(tooltip);
-            return button;
-        };
-
-        mCurrentImageButtons.push_back(makeButton(
-            "Norm.",
-            [this]() { normalizeExposureAndOffset(); },
-            0,
-            "Normalize image such that the smallest pixel value is displayed as 0 and the largest as 1.\n\n"
-            "Shortcut: N"
-        ));
-        makeButton("Reset", [this]() { resetImage(); }, 0, "Shortcut: R");
-
-        mHdrPopupButton = new PopupButton{buttonContainer, "HDR", 0};
-        mHdrPopupButton->set_font_size(15);
-        mHdrPopupButton->set_chevron_icon(0);
-
+        // Exposure/offset buttons
         {
-            auto addSpacer = [](Widget* current, int space) {
-                auto row = new Widget{current};
-                row->set_height(space);
+            auto buttonContainer = new Widget{tonemapPanel};
+            buttonContainer->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 5, 2});
+
+            auto makeButton = [&](string_view name, function<void()> callback, int icon = 0, string_view tooltip = "") {
+                auto button = new Button{buttonContainer, name, icon};
+                button->set_font_size(15);
+                button->set_callback(callback);
+                button->set_tooltip(tooltip);
+                return button;
             };
 
-            auto popup = mHdrPopupButton->popup();
-            popup->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 10});
+            mCurrentImageButtons.push_back(makeButton(
+                "Norm.",
+                [this]() { normalizeExposureAndOffset(); },
+                0,
+                "Normalize image such that the smallest pixel value is displayed as 0 and the largest as 1.\n\n"
+                "Shortcut: N"
+            ));
+            makeButton("Reset", [this]() { resetImage(); }, 0, "Shortcut: R");
 
-            new Label{popup, "HDR Settings", "sans-bold", 20};
-            addSpacer(popup, 10);
+            mHdrPopupButton = new PopupButton{buttonContainer, "HDR", 0};
+            mHdrPopupButton->set_font_size(15);
+            mHdrPopupButton->set_chevron_icon(0);
 
-            mClipToLdrButton = new Button{popup, "Clip to LDR", 0};
-            mClipToLdrButton->set_font_size(15);
-            mClipToLdrButton->set_change_callback([this](bool value) { mImageCanvas->setClipToLdr(value); });
-            mClipToLdrButton->set_tooltip(
-                "Clips the image to [0,1] as if displayed on a low dynamic range (LDR) screen.\n\n"
-                "Shortcut: U"
-            );
-            mClipToLdrButton->set_flags(Button::ToggleButton);
+            {
+                auto addSpacer = [](Widget* current, int space) {
+                    auto row = new Widget{current};
+                    row->set_height(space);
+                };
 
-            addSpacer(popup, 10);
+                auto popup = mHdrPopupButton->popup();
+                popup->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 10});
 
-            new Label{popup, "Display White Level"};
+                new Label{popup, "HDR Settings", "sans-bold", 20};
+                addSpacer(popup, 10);
 
-            addSpacer(popup, 5);
-
-            auto whiteLevelContainer = new Widget{popup};
-            whiteLevelContainer->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 0, 2});
-
-            mDisplayWhiteLevelBox = new FloatBox<float>{whiteLevelContainer};
-            mDisplayWhiteLevelBox->set_alignment(TextBox::Alignment::Right);
-            mDisplayWhiteLevelBox->set_min_max_values(0.0f, 10000.0f);
-            mDisplayWhiteLevelBox->set_fixed_width(90);
-            mDisplayWhiteLevelBox->set_value(glfwGetWindowSdrWhiteLevel(m_glfw_window));
-            mDisplayWhiteLevelBox->set_default_value(to_string(DEFAULT_IMAGE_WHITE_LEVEL));
-            mDisplayWhiteLevelBox->set_units("nits");
-
-            mDisplayWhiteLevelSettingComboBox = new ComboBox{
-                whiteLevelContainer, {"System", "Custom", "Image"}
-            };
-            mDisplayWhiteLevelSettingComboBox->set_font_size(15);
-            mDisplayWhiteLevelSettingComboBox->set_fixed_width(80);
-            mDisplayWhiteLevelSettingComboBox->set_callback([this](int value) {
-                setDisplayWhiteLevelSetting(static_cast<EDisplayWhiteLevelSetting>(value));
-            });
-
-            mDisplayWhiteLevelBox->set_callback([this](float value) {
-                setDisplayWhiteLevelSetting(EDisplayWhiteLevelSetting::Custom);
-                setDisplayWhiteLevel(value);
-            });
-
-            addSpacer(popup, 10);
-
-            new Label{popup, "Best Guess Image White Level"};
-
-            addSpacer(popup, 5);
-
-            mImageWhiteLevelBox = new FloatBox<float>{popup};
-            mImageWhiteLevelBox->set_alignment(TextBox::Alignment::Right);
-            mImageWhiteLevelBox->set_min_max_values(0.0, 10000.0f);
-            mImageWhiteLevelBox->set_fixed_width(90);
-            mImageWhiteLevelBox->set_value(DEFAULT_IMAGE_WHITE_LEVEL);
-            mImageWhiteLevelBox->set_default_value(to_string(DEFAULT_IMAGE_WHITE_LEVEL));
-            mImageWhiteLevelBox->set_units("nits");
-            mImageWhiteLevelBox->set_tooltip(
-                "tev's best guess of the image's reference white level (aka. paper white) in nits (cd/m²). "
-                "This value represents the brightness a pixel value of 1.0 is meant to represent.\n\n"
-
-                "tev usually has to guess this value for multiple reasons. "
-                "Many image formats are display-referred and, as such, have no white level in (absolute) nits. "
-                "Other formats are scene-referred and thus do have an absolute white level, but this information is often not stored in the file. "
-                "Sometimes, it is not even clear whether a given image format is display- or scene-referred.\n\n"
-
-                "However, when an image has unambiguous metadata, e.g. uses the PQ transfer function, "
-                "tev can determine the white level reliably."
-            );
-
-            mImageWhiteLevelBox->set_editable(false);
-            mImageWhiteLevelBox->set_enabled(false);
-        }
-
-        auto bgPopupBtn = new PopupButton{buttonContainer, "", FA_PAINT_BRUSH};
-        bgPopupBtn->set_font_size(15);
-        bgPopupBtn->set_chevron_icon(0);
-        bgPopupBtn->set_tooltip("Background Color");
-
-        // Background color popup
-        {
-            auto popup = bgPopupBtn->popup();
-            popup->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 10});
-
-            new Label{popup, "Background Color"};
-            auto colorwheel = new ColorWheel{popup, mImageCanvas->backgroundColor()};
-            colorwheel->set_color(bgPopupBtn->background_color());
-
-            new Label{popup, "Background Alpha"};
-            auto bgAlphaSlider = new Slider{popup};
-            bgAlphaSlider->set_range({0.0f, 1.0f});
-            bgAlphaSlider->set_callback([this](float value) {
-                auto col = mImageCanvas->backgroundColor();
-                mImageCanvas->setBackgroundColor(
-                    Color{
-                        col.r(),
-                        col.g(),
-                        col.b(),
-                        value,
-                    }
+                mClipToLdrButton = new Button{popup, "Clip to LDR", 0};
+                mClipToLdrButton->set_font_size(15);
+                mClipToLdrButton->set_change_callback([this](bool value) { mImageCanvas->setClipToLdr(value); });
+                mClipToLdrButton->set_tooltip(
+                    "Clips the image to [0,1] as if displayed on a low dynamic range (LDR) screen.\n\n"
+                    "Shortcut: U"
                 );
-            });
+                mClipToLdrButton->set_flags(Button::ToggleButton);
 
-            bgAlphaSlider->set_value(0);
+                addSpacer(popup, 10);
 
-            colorwheel->set_callback([bgAlphaSlider, this](const Color& value) {
-                // popupBtn->set_background_color(value);
-                mImageCanvas->setBackgroundColor(
-                    Color{
-                        value.r(),
-                        value.g(),
-                        value.b(),
-                        bgAlphaSlider->value(),
-                    }
+                new Label{popup, "Display White Level"};
+
+                addSpacer(popup, 5);
+
+                auto whiteLevelContainer = new Widget{popup};
+                whiteLevelContainer->set_layout(new GridLayout{Orientation::Horizontal, 2, Alignment::Fill, 0, 2});
+
+                mDisplayWhiteLevelBox = new FloatBox<float>{whiteLevelContainer};
+                mDisplayWhiteLevelBox->set_alignment(TextBox::Alignment::Right);
+                mDisplayWhiteLevelBox->set_min_max_values(0.0f, 10000.0f);
+                mDisplayWhiteLevelBox->set_fixed_width(90);
+                mDisplayWhiteLevelBox->set_value(glfwGetWindowSdrWhiteLevel(m_glfw_window));
+                mDisplayWhiteLevelBox->set_default_value(to_string(DEFAULT_IMAGE_WHITE_LEVEL));
+                mDisplayWhiteLevelBox->set_units("nits");
+
+                mDisplayWhiteLevelSettingComboBox = new ComboBox{
+                    whiteLevelContainer, {"System", "Custom", "Image"}
+                };
+                mDisplayWhiteLevelSettingComboBox->set_font_size(15);
+                mDisplayWhiteLevelSettingComboBox->set_fixed_width(80);
+                mDisplayWhiteLevelSettingComboBox->set_callback([this](int value) {
+                    setDisplayWhiteLevelSetting(static_cast<EDisplayWhiteLevelSetting>(value));
+                });
+
+                mDisplayWhiteLevelBox->set_callback([this](float value) {
+                    setDisplayWhiteLevelSetting(EDisplayWhiteLevelSetting::Custom);
+                    setDisplayWhiteLevel(value);
+                });
+
+                addSpacer(popup, 10);
+
+                new Label{popup, "Best Guess Image White Level"};
+
+                addSpacer(popup, 5);
+
+                mImageWhiteLevelBox = new FloatBox<float>{popup};
+                mImageWhiteLevelBox->set_alignment(TextBox::Alignment::Right);
+                mImageWhiteLevelBox->set_min_max_values(0.0, 10000.0f);
+                mImageWhiteLevelBox->set_fixed_width(90);
+                mImageWhiteLevelBox->set_value(DEFAULT_IMAGE_WHITE_LEVEL);
+                mImageWhiteLevelBox->set_default_value(to_string(DEFAULT_IMAGE_WHITE_LEVEL));
+                mImageWhiteLevelBox->set_units("nits");
+                mImageWhiteLevelBox->set_tooltip(
+                    "tev's best guess of the image's reference white level (aka. paper white) in nits (cd/m²). "
+                    "This value represents the brightness a pixel value of 1.0 is meant to represent.\n\n"
+
+                    "tev usually has to guess this value for multiple reasons. "
+                    "Many image formats are display-referred and, as such, have no white level in (absolute) nits. "
+                    "Other formats are scene-referred and thus do have an absolute white level, but this information is often not stored in the file. "
+                    "Sometimes, it is not even clear whether a given image format is display- or scene-referred.\n\n"
+
+                    "However, when an image has unambiguous metadata, e.g. uses the PQ transfer function, "
+                    "tev can determine the white level reliably."
                 );
-            });
-        }
-    }
 
-    // Tonemap options
-    {
-        mTonemapButtonContainer = new Widget{mSidebarLayout};
-        mTonemapButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 5, 2});
+                mImageWhiteLevelBox->set_editable(false);
+                mImageWhiteLevelBox->set_enabled(false);
+            }
 
-        auto makeTonemapButton = [&](string_view name, function<void()> callback) {
-            auto button = new Button{mTonemapButtonContainer, name};
-            button->set_flags(Button::RadioButton);
-            button->set_font_size(15);
-            button->set_callback(callback);
-            return button;
-        };
+            auto bgPopupBtn = new PopupButton{buttonContainer, "", FA_PAINT_BRUSH};
+            bgPopupBtn->set_font_size(15);
+            bgPopupBtn->set_chevron_icon(0);
+            bgPopupBtn->set_tooltip("Background Color");
 
-        makeTonemapButton("None", [this]() { setTonemap(ETonemap::SRGB); });
-        makeTonemapButton("Gamma", [this]() { setTonemap(ETonemap::Gamma); });
-        makeTonemapButton("FC", [this]() { setTonemap(ETonemap::FalseColor); });
-        makeTonemapButton("+/-", [this]() { setTonemap(ETonemap::PositiveNegative); });
+            // Background color popup
+            {
+                auto popup = bgPopupBtn->popup();
+                popup->set_layout(new BoxLayout{Orientation::Vertical, Alignment::Fill, 10});
 
-        setTonemap(ETonemap::SRGB);
+                new Label{popup, "Background Color"};
+                auto colorwheel = new ColorWheel{popup, mImageCanvas->backgroundColor()};
+                colorwheel->set_color(bgPopupBtn->background_color());
 
-        mTonemapButtonContainer->set_tooltip(
-            "Tonemap selection:\n\n"
+                new Label{popup, "Background Alpha"};
+                auto bgAlphaSlider = new Slider{popup};
+                bgAlphaSlider->set_range({0.0f, 1.0f});
+                bgAlphaSlider->set_callback([this](float value) {
+                    auto col = mImageCanvas->backgroundColor();
+                    mImageCanvas->setBackgroundColor(
+                        Color{
+                            col.r(),
+                            col.g(),
+                            col.b(),
+                            value,
+                        }
+                    );
+                });
 
-            "None\n"
-            "No tonemapping\n\n"
+                bgAlphaSlider->set_value(0);
 
-            "Gamma\n"
-            "Gamma correction + inverse sRGB\n"
-            "Needed when displaying SDR to\n"
-            "gamma-encoded displays.\n\n"
-
-            "FC\n"
-            "False-color visualization\n\n"
-
-            "+/-\n"
-            "Positive=Green, Negative=Red"
-        );
-    }
-
-    auto toggleChildrenVisibilityExceptFirst = [](Widget* parentPanel) {
-        // Hide all children except the first one (which is the header panel)
-        for (auto& child : parentPanel->children()) {
-            if (child != parentPanel->children().front()) {
-                child->set_visible(!child->visible());
+                colorwheel->set_callback([bgAlphaSlider, this](const Color& value) {
+                    // popupBtn->set_background_color(value);
+                    mImageCanvas->setBackgroundColor(
+                        Color{
+                            value.r(),
+                            value.g(),
+                            value.b(),
+                            bgAlphaSlider->value(),
+                        }
+                    );
+                });
             }
         }
-    };
 
-    // Helper for creating a show/hide button for panels
-    auto createShowHideButton = [this, toggleChildrenVisibilityExceptFirst](Widget* parentPanel, const string& tooltip) -> Button* {
-        // Assume the first child is the header panel
-        auto headerPanel = parentPanel->children().front();
+        // Tonemap options
+        {
+            mTonemapButtonContainer = new Widget{tonemapPanel};
+            mTonemapButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 4, Alignment::Fill, 5, 2});
 
-        auto button = new Button{headerPanel, "", FA_EYE};
-        button->set_font_size(15);
-        button->set_flags(Button::ToggleButton);
-        button->set_pushed(false);
-        button->set_tooltip(tooltip);
-        button->set_change_callback([this, parentPanel, toggleChildrenVisibilityExceptFirst](bool value) {
-            toggleChildrenVisibilityExceptFirst(parentPanel);
-            updateLayout();
-        });
-        return button;
-    };
+            auto makeTonemapButton = [&](string_view name, function<void()> callback) {
+                auto button = new Button{mTonemapButtonContainer, name};
+                button->set_flags(Button::RadioButton);
+                button->set_font_size(15);
+                button->set_callback(callback);
+                return button;
+            };
 
-    // Error metrics
-    {
-        mMetricButtonContainer = new Widget{mSidebarLayout};
-        mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
+            makeTonemapButton("None", [this]() { setTonemap(ETonemap::SRGB); });
+            makeTonemapButton("Gamma", [this]() { setTonemap(ETonemap::Gamma); });
+            makeTonemapButton("FC", [this]() { setTonemap(ETonemap::FalseColor); });
+            makeTonemapButton("+/-", [this]() { setTonemap(ETonemap::PositiveNegative); });
 
-        auto makeMetricButton = [&](string_view name, function<void()> callback) {
-            auto button = new Button{mMetricButtonContainer, name};
-            button->set_flags(Button::RadioButton);
-            button->set_font_size(15);
-            button->set_callback(callback);
-            return button;
-        };
+            setTonemap(ETonemap::SRGB);
 
-        makeMetricButton("E", [this]() { setMetric(EMetric::Error); });
-        makeMetricButton("AE", [this]() { setMetric(EMetric::AbsoluteError); });
-        makeMetricButton("SE", [this]() { setMetric(EMetric::SquaredError); });
-        makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
-        makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
-        makeMetricButton("SMAPE", [this]() { setMetric(EMetric::SMAPE); });
+            mTonemapButtonContainer->set_tooltip(
+                "Tonemap selection:\n\n"
 
-        setMetric(EMetric::AbsoluteError);
+                "None\n"
+                "No tonemapping\n\n"
 
-        mMetricButtonContainer->set_tooltip(
-            "Error metric selection. Given a reference image r and the selected image i, "
-            "the following operators are available:\n\n"
+                "Gamma\n"
+                "Gamma correction + inverse sRGB\n"
+                "Needed when displaying SDR to\n"
+                "gamma-encoded displays.\n\n"
 
-            "E (Error)\n"
-            "i - r\n\n"
+                "FC\n"
+                "False-color visualization\n\n"
 
-            "AE (Absolute Error)\n"
-            "|i - r|\n\n"
+                "+/-\n"
+                "Positive=Green, Negative=Red"
+            );
+        }
 
-            "SE (Squared Error)\n"
-            "(i - r)²\n\n"
+        // Error metrics
+        {
+            mMetricButtonContainer = new Widget{tonemapPanel};
+            mMetricButtonContainer->set_layout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
 
-            "RAE (Relative Absolute Error)\n"
-            "|i - r| / (r + 0.01)\n\n"
+            auto makeMetricButton = [&](string_view name, function<void()> callback) {
+                auto button = new Button{mMetricButtonContainer, name};
+                button->set_flags(Button::RadioButton);
+                button->set_font_size(15);
+                button->set_callback(callback);
+                return button;
+            };
 
-            "RSE (Relative Squared Error)\n"
-            "(i - r)² / (r² + 0.01)\n\n"
+            makeMetricButton("E", [this]() { setMetric(EMetric::Error); });
+            makeMetricButton("AE", [this]() { setMetric(EMetric::AbsoluteError); });
+            makeMetricButton("SE", [this]() { setMetric(EMetric::SquaredError); });
+            makeMetricButton("RAE", [this]() { setMetric(EMetric::RelativeAbsoluteError); });
+            makeMetricButton("RSE", [this]() { setMetric(EMetric::RelativeSquaredError); });
+            makeMetricButton("SMAPE", [this]() { setMetric(EMetric::SMAPE); });
 
-            "SMAPE (Symmetric Mean Absolute Percentage Error)\n"
-            "|i - r| / (|i| + |r| + 0.01)"
-        );
+            setMetric(EMetric::AbsoluteError);
+
+            mMetricButtonContainer->set_tooltip(
+                "Error metric selection. Given a reference image r and the selected image i, "
+                "the following operators are available:\n\n"
+
+                "E (Error)\n"
+                "i - r\n\n"
+
+                "AE (Absolute Error)\n"
+                "|i - r|\n\n"
+
+                "SE (Squared Error)\n"
+                "(i - r)²\n\n"
+
+                "RAE (Relative Absolute Error)\n"
+                "|i - r| / (r + 0.01)\n\n"
+
+                "RSE (Relative Squared Error)\n"
+                "(i - r)² / (r² + 0.01)\n\n"
+
+                "SMAPE (Symmetric Mean Absolute Percentage Error)\n"
+                "|i - r| / (|i| + |r| + 0.01)"
+            );
+        }
     }
 
     // Copy size modifier
